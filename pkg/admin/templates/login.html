@@ -1,0 +1,16 @@
+{{template "head" "Sign in"}}
+<div style="max-width:360px;margin:12vh auto">
+  <svg class="mark" viewBox="0 0 64 64" aria-hidden="true" style="width:34px;height:34px;margin-bottom:12px"><path fill="currentColor" d="{{mark}}"/></svg>
+  <h1 style="font-size:22px;margin:0 0 4px">Jacklet</h1>
+  <p class="muted" style="margin:0 0 20px">Administration</p>
+  {{if .Problem}}<div class="note bad">{{.Problem}}</div>{{end}}
+  <form method="post" action="/admin/login" class="card">
+    {{if .Next}}<input type="hidden" name="next" value="{{.Next}}">{{end}}
+    <div class="field">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autocomplete="current-password" autofocus required>
+    </div>
+    <button type="submit">Sign in</button>
+  </form>
+</div>
+{{template "foot"}}

@@ -1,0 +1,50 @@
+{{template "head" "Search"}}
+{{template "nav" .CSRFToken}}
+
+<div class="card">
+  <h2>Manual search</h2>
+  <form method="post" action="/admin/search" class="row">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <div>
+      <label for="indexer">Indexer</label>
+      <select id="indexer" name="indexer">
+        {{range .Indexers}}<option value="{{.ID}}"{{if eq .ID $.Indexer}} selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+    </div>
+    <div class="grow">
+      <label for="q">Query</label>
+      <input type="text" id="q" name="q" value="{{.Query}}" placeholder="leave empty for latest releases">
+    </div>
+    <button type="submit">Search</button>
+  </form>
+</div>
+
+{{if .Problem}}<div class="note bad">{{.Problem}}</div>{{end}}
+
+{{if .Searched}}
+<div class="card">
+  <h2>Results{{if .Results}} ({{len .Results}}){{end}}</h2>
+  {{if not .Results}}
+    <p class="muted">Nothing matched. The search may have returned no rows, or the definition's selectors may no longer match the site.</p>
+  {{else}}
+  <div class="scroll" tabindex="0" role="region" aria-label="Search results">
+  <table>
+    <thead><tr><th>Title</th><th>Torrent</th><th>Magnet</th><th class="num">Seeders</th><th class="num">Size</th><th class="num">Category</th></tr></thead>
+    <tbody>
+    {{range .Results}}
+      <tr>
+        <td>{{.Title}}<div class="muted break"><code>{{.Link}}</code></div></td>
+        <td>{{template "torrentLink" .}}</td>
+        <td>{{template "magnetLink" .}}</td>
+        <td class="num">{{.Seeders}}</td>
+        <td class="num">{{bytes .Size}}</td>
+        <td class="num">{{.Category}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{template "foot"}}

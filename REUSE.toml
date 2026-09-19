@@ -1,0 +1,41 @@
+version = 1
+
+[[annotations]]
+path = [
+  "go.sum",
+  "packaging/mkico/go.sum",
+  "packaging/mkman/go.sum",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 TorrPlay"
+SPDX-License-Identifier = "MIT"
+
+# These files are served to users verbatim -- the admin templates as rendered
+# HTML responses, docs.html as a static asset -- so a comment header in the
+# file itself would end up in the response body, ahead of the doctype. Cover
+# them here instead of in-file.
+[[annotations]]
+path = [
+  "cmd/jacklet/public/docs.html",
+  "pkg/admin/templates/dashboard.html",
+  "pkg/admin/templates/indexer.html",
+  "pkg/admin/templates/layout.html",
+  "pkg/admin/templates/login.html",
+  "pkg/admin/templates/search.html",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 TorrPlay"
+SPDX-License-Identifier = "MIT"
+
+# The golden Torznab documents are byte-for-byte copies of what the server
+# renders, which is the whole point of comparing against them: a comment
+# header in the file itself would have to be rendered too, or the test
+# would fail on its own licensing. Cover them here instead of in-file.
+[[annotations]]
+path = [
+  "pkg/torznab/testdata/caps.xml",
+  "pkg/torznab/testdata/feed.xml",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 TorrPlay"
+SPDX-License-Identifier = "MIT"

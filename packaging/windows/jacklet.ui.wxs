@@ -1,0 +1,245 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 TorrPlay
+
+SPDX-License-Identifier: MIT
+
+The one dialog the stock wizard does not provide: the settings Jacklet
+needs before it is worth starting.
+
+It sits between choosing the install folder and the confirmation page, so
+the service is configured by the time anything is written. The licence
+page before it comes from the stock dialog set; only the licence text
+itself has to be supplied, as RTF.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Fragment>
+    <!--
+      Public, so a silent install can supply them, and Secure so they
+      survive the handoff to the part of the install that runs elevated.
+    -->
+    <!--
+      Hidden keeps a credential out of the property dump an installer log
+      begins with. It does not make the install secret: a verbose log
+      also records the registry write that carries these values, so a log
+      from "msiexec /l*v" holds the API key whatever this says, and is
+      worth treating as a credential itself.
+    -->
+    <Property Id="JACKLETAPIKEY" Secure="yes" Hidden="yes" />
+    <Property Id="JACKLETADMINPASSWORD" Secure="yes" Hidden="yes" />
+    <!--
+      No default here. A property that arrives with a value can never
+      satisfy the emptiness guard the recovery below tests, so it would
+      be recovered never and overwritten always; the defaults are applied
+      in a second pass instead, once the first has had its chance.
+    -->
+    <Property Id="JACKLETPORT" Secure="yes" />
+    <Property Id="JACKLETCONFIGDIR" Secure="yes" />
+    <Property Id="JACKLETDBPATH" Secure="yes" />
+    <Property Id="JACKLETDEFINITIONSDIR" Secure="yes" />
+    <Property Id="JACKLETLOGFILE" Secure="yes" />
+    <Property Id="JACKLETADMINPASSWORDHASH" Secure="yes" Hidden="yes" />
+    <!--
+      Left null when the rule is not wanted, which is what an unticked
+      box means to the installer: a check box renders ticked whenever its
+      property has any value at all, so giving this one a default of "0"
+      would offer the rule as though it had already been chosen while the
+      component that creates it, which tests for "1", did nothing.
+    -->
+    <Property Id="ADDFIREWALLRULE" Secure="yes" />
+
+    <!--
+      What this machine is already configured with, read before anything
+      is torn down.
+
+      An upgrade removes the installed package after the replacing one has
+      settled what each of its components will write, so a setting that
+      exists only in the old package's registry values is gone by the time
+      it would be needed. AppSearch runs first of all, early enough to
+      capture them; the assignments below carry them into what the install
+      writes, unless something was supplied instead.
+
+      Every setting is recovered, not only the ones the wizard asks for: a
+      path an operator moved is as much their configuration as the key
+      they chose, and a repair rewrites these rows too.
+    -->
+    <Property Id="EXISTINGAPIKEY">
+      <RegistrySearch Id="ExistingApikey" Root="HKLM" Key="SOFTWARE\Jacklet\Settings"
+                      Name="ApiKey" Type="raw" />
+    </Property>
+    <Property Id="EXISTINGPORT">
+      <RegistrySearch Id="ExistingPort" Root="HKLM" Key="SOFTWARE\Jacklet\Settings"
+                      Name="Port" Type="raw" />
+    </Property>
+    <Property Id="EXISTINGCONFIGDIR">
+      <RegistrySearch Id="ExistingConfigdir" Root="HKLM" Key="SOFTWARE\Jacklet\Settings"
+                      Name="ConfigDir" Type="raw" />
+    </Property>
+    <Property Id="EXISTINGDBPATH">
+      <RegistrySearch Id="ExistingDbpath" Root="HKLM" Key="SOFTWARE\Jacklet\Settings"
+                      Name="DatabasePath" Type="raw" />
+    </Property>
+    <Property Id="EXISTINGDEFINITIONSDIR">
+      <RegistrySearch Id="ExistingDefinitionsdir" Root="HKLM" Key="SOFTWARE\Jacklet\Settings"
+                      Name="DefinitionsDir" Type="raw" />
+    </Property>
+    <Property Id="EXISTINGLOGFILE">
+      <RegistrySearch Id="ExistingLogfile" Root="HKLM" Key="SOFTWARE\Jacklet\Settings"
+                      Name="LogFile" Type="raw" />
+    </Property>
+    <Property Id="EXISTINGADMINPASSWORDHASH">
+      <RegistrySearch Id="ExistingAdminpasswordhash" Root="HKLM" Key="SOFTWARE\Jacklet\Settings"
+                      Name="AdminPasswordHash" Type="raw" />
+    </Property>
+    <Property Id="EXISTINGFIREWALLRULE">
+      <RegistrySearch Id="ExistingFirewallRule" Root="HKLM" Key="SOFTWARE\Jacklet\Installer"
+                      Name="FirewallRule" Type="raw" />
+    </Property>
+
+    <!--
+      Explicit rather than letting a search write a settings property
+      directly, so that a value given on the command line is never quietly
+      replaced by what was already installed. None of these is limited to
+      an upgrade: a repair reaches the same rows, and a setting that came
+      back only on one of the two would be a worse surprise than one that
+      never came back at all.
+    -->
+    <SetProperty Id="JACKLETAPIKEY" Action="RecoverAPIKEY" Value="[EXISTINGAPIKEY]" After="AppSearch" Sequence="both"
+                 Condition="JACKLETAPIKEY=&quot;&quot; AND EXISTINGAPIKEY&lt;&gt;&quot;&quot;" />
+    <SetProperty Id="JACKLETPORT" Action="RecoverPORT" Value="[EXISTINGPORT]" After="AppSearch" Sequence="both"
+                 Condition="JACKLETPORT=&quot;&quot; AND EXISTINGPORT&lt;&gt;&quot;&quot;" />
+    <SetProperty Id="JACKLETCONFIGDIR" Action="RecoverCONFIGDIR" Value="[EXISTINGCONFIGDIR]" After="AppSearch" Sequence="both"
+                 Condition="JACKLETCONFIGDIR=&quot;&quot; AND EXISTINGCONFIGDIR&lt;&gt;&quot;&quot;" />
+    <SetProperty Id="JACKLETDBPATH" Action="RecoverDBPATH" Value="[EXISTINGDBPATH]" After="AppSearch" Sequence="both"
+                 Condition="JACKLETDBPATH=&quot;&quot; AND EXISTINGDBPATH&lt;&gt;&quot;&quot;" />
+    <SetProperty Id="JACKLETDEFINITIONSDIR" Action="RecoverDEFINITIONSDIR" Value="[EXISTINGDEFINITIONSDIR]" After="AppSearch" Sequence="both"
+                 Condition="JACKLETDEFINITIONSDIR=&quot;&quot; AND EXISTINGDEFINITIONSDIR&lt;&gt;&quot;&quot;" />
+    <SetProperty Id="JACKLETLOGFILE" Action="RecoverLOGFILE" Value="[EXISTINGLOGFILE]" After="AppSearch" Sequence="both"
+                 Condition="JACKLETLOGFILE=&quot;&quot; AND EXISTINGLOGFILE&lt;&gt;&quot;&quot;" />
+    <SetProperty Id="JACKLETADMINPASSWORDHASH" Action="RecoverADMINPASSWORDHASH" Value="[EXISTINGADMINPASSWORDHASH]" After="AppSearch" Sequence="both"
+                 Condition="JACKLETADMINPASSWORDHASH=&quot;&quot; AND EXISTINGADMINPASSWORDHASH&lt;&gt;&quot;&quot;" />
+    <SetProperty Id="ADDFIREWALLRULE" Action="RecoverFIREWALLRULE" Value="1" After="AppSearch" Sequence="both"
+                 Condition="ADDFIREWALLRULE=&quot;&quot; AND EXISTINGFIREWALLRULE&lt;&gt;&quot;&quot;" />
+
+    <!--
+      The defaults, for a first install that recovered nothing. After the
+      directories are resolved, and after the recovery above, so that this
+      fills in only what the first pass left empty. Declaring any of them
+      on the property itself would defeat that pass entirely.
+    -->
+    <SetProperty Id="JACKLETPORT" Action="DefaultPORT" Value="9117" After="CostFinalize" Sequence="both"
+                 Condition="JACKLETPORT=&quot;&quot;" />
+    <SetProperty Id="JACKLETCONFIGDIR" Action="DefaultCONFIGDIR" Value="[CFGFOLDER]" After="CostFinalize" Sequence="both"
+                 Condition="JACKLETCONFIGDIR=&quot;&quot;" />
+    <SetProperty Id="JACKLETDBPATH" Action="DefaultDBPATH" Value="[DATAFOLDER]jacklet.db" After="CostFinalize" Sequence="both"
+                 Condition="JACKLETDBPATH=&quot;&quot;" />
+    <SetProperty Id="JACKLETDEFINITIONSDIR" Action="DefaultDEFINITIONSDIR" Value="[DEFSFOLDER]" After="CostFinalize" Sequence="both"
+                 Condition="JACKLETDEFINITIONSDIR=&quot;&quot;" />
+    <SetProperty Id="JACKLETLOGFILE" Action="DefaultLOGFILE" Value="[LOGSFOLDER]jacklet.log" After="CostFinalize" Sequence="both"
+                 Condition="JACKLETLOGFILE=&quot;&quot;" />
+
+    <!--
+      Named, and referenced from the package with a UIRef. A fragment is
+      linked only if something refers to it, and a [PROPERTY] used in a
+      formatted string does not refer to anything, so without this the
+      whole dialog is dropped without a word and the stock wizard runs in
+      its place.
+    -->
+    <UI Id="JackletConfigUI">
+      <Dialog Id="JackletConfigDlg" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" NoPrefix="yes"
+                 Text="{\WixUI_Font_Title}Configure Jacklet" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="330" Height="20" Transparent="yes" NoPrefix="yes"
+                 Text="These are stored where the service reads them, and can be changed later with &quot;jacklet service config&quot;." />
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+
+        <Control Id="ApiKeyLabel" Type="Text" X="20" Y="60" Width="290" Height="10"
+                 Text="&amp;API key (required). Clients must send this as the apikey parameter." />
+        <Control Id="ApiKeyEdit" Type="Edit" X="20" Y="72" Width="330" Height="18" Property="JACKLETAPIKEY" />
+        <Control Id="ApiKeyNote" Type="Text" X="20" Y="92" Width="330" Height="18" NoPrefix="yes"
+                 Text="Without one, every indexer endpoint answers anyone who can reach the port." />
+
+        <Control Id="PortLabel" Type="Text" X="20" Y="116" Width="100" Height="10" Text="&amp;Port" />
+        <Control Id="PortEdit" Type="Edit" X="20" Y="128" Width="60" Height="18" Property="JACKLETPORT" Integer="yes" />
+
+        <Control Id="PasswordLabel" Type="Text" X="20" Y="154" Width="290" Height="10"
+                 Text="Admin panel pass&amp;word (optional). Leave empty to keep the panel disabled." />
+        <Control Id="PasswordEdit" Type="Edit" X="20" Y="166" Width="330" Height="18" Property="JACKLETADMINPASSWORD" Password="yes" />
+        <Control Id="PasswordNote" Type="Text" X="20" Y="186" Width="330" Height="18" NoPrefix="yes"
+                 Text="It is hashed the first time the service starts, and the plaintext is removed." />
+
+        <Control Id="FirewallCheck" Type="CheckBox" X="20" Y="210" Width="330" Height="18"
+                 Property="ADDFIREWALLRULE" CheckBoxValue="1"
+                 Text="Allow inbound connections on this port from the &amp;local network" />
+
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)">
+          <Publish Event="NewDialog" Value="InstallDirDlg" />
+        </Control>
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)">
+          <!-- That this page was reached, so Back can return to it once
+               the key it collected makes the question that led here
+               answer differently. -->
+          <Publish Property="JACKLETASKED" Value="1" Order="1" />
+          <!-- An empty API key is the one thing this dialog exists to
+               prevent, so it blocks rather than warns. The two are
+               mutually exclusive, which they have to be: only one move to
+               another dialog is published per control. -->
+          <Publish Event="SpawnDialog" Value="JackletApiKeyRequiredDlg" Condition="JACKLETAPIKEY=&quot;&quot;" Order="2" />
+          <Publish Event="NewDialog" Value="VerifyReadyDlg" Condition="JACKLETAPIKEY&lt;&gt;&quot;&quot;" Order="3" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="JackletApiKeyRequiredDlg" Width="260" Height="85" Title="[ProductName] Setup" NoMinimize="yes">
+        <Control Id="Text" Type="Text" X="15" Y="15" Width="230" Height="30"
+                 Text="Enter an API key. Jacklet serves its indexer endpoints to anyone who can reach its port until one is set." />
+        <Control Id="Return" Type="PushButton" X="102" Y="57" Width="56" Height="17" Default="yes" Cancel="yes"
+                 Text="OK">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+      </Dialog>
+
+      <!--
+        Splice the dialog into the stock sequence. The stock folder page
+        publishes, on Next: CheckTargetPath at 1, SetTargetPath at 3 and
+        NewDialog VerifyReadyDlg at 4.
+
+        Ordered above all of them, because where several events would move
+        to a new dialog the installer publishes only the one with the
+        largest ordering, not the first whose condition holds. The stock
+        move to the confirmation at 4 names no condition, so anything
+        ordered below it is overruled however true its own condition is,
+        and this page was unreachable until it climbed above. Nothing else
+        about the page is disturbed: the events that are not dialog moves
+        all run, in order, including the one at 3 that applies the folder.
+
+        It fires only when there is nothing configured yet, which is asked
+        directly: by this point the recovery above has had its chance, so
+        an empty key means nothing was recovered and nothing was supplied.
+        When it does not fire, the stock navigation at 4 carries on to the
+        confirmation as usual.
+
+        Asking whether this is an upgrade instead would be a proxy for
+        that, and a poor one. An upgrade over an installation that has no
+        key, one an earlier version left unconfigured, or one whose
+        settings were lost, would skip the page on the grounds that
+        settings exist, and there would then be no way to supply them
+        through the installer at all, while the service ran with its
+        indexer endpoints open.
+      -->
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="JackletConfigDlg" Order="5"
+               Condition="JACKLETAPIKEY=&quot;&quot;" />
+      <!-- Likewise above the stock Back events, which return to the
+           folder page at 1 and to the maintenance choices at 2. The page
+           is on the way back only if it was on the way in, which it
+           records for itself: by this point it has collected a key, so
+           asking whether the key is empty would answer no every time. -->
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="JackletConfigDlg" Order="3"
+               Condition="JACKLETASKED=&quot;1&quot;" />
+    </UI>
+  </Fragment>
+</Wix>

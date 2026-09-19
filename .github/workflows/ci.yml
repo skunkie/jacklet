@@ -1,0 +1,248 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # Every commit is expected to build, test, lint and carry its licensing
+  # cleanly on its own, rather than only at the end of a branch, so the
+  # jobs below are exactly the checks a contributor runs before
+  # committing. A check added here is one to add to docs/development.md
+  # too, which is where a contributor reads that list.
+  build:
+    name: Build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Windows runs the tests for real because the behavior that differs
+    # there cannot be reached from Linux: renaming a file that is still
+    # open fails on Windows and succeeds on Linux, and the service
+    # integration and its registry-backed configuration are not even
+    # compiled by a Linux build.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go build ./...
+      # The race detector and coverage add nothing per-platform, so one
+      # run of each is enough.
+      - if: runner.os == 'Linux'
+        run: go test -race -cover ./...
+      - if: runner.os == 'Windows'
+        run: go test ./...
+      # Seconds, and it catches a Windows file broken by an edit
+      # elsewhere without waiting for the Windows runner.
+      - name: Cross-build the Windows files
+        if: runner.os == 'Linux'
+        env:
+          GOOS: windows
+        run: |
+          GOARCH=amd64 go build ./...
+          GOARCH=arm64 go vet ./...
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.2
+      # A lint run sees only the files its build context selects, so the
+      # run above never reaches a _windows.go file. Setting GOOS is enough
+      # to lint them, and costs nothing next to a second runner.
+      - uses: golangci/golangci-lint-action@v9
+        env:
+          GOOS: windows
+          GOARCH: amd64
+        with:
+          version: v2.13.2
+      # Each its own module, so the root invocation above does not reach
+      # them.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.2
+          working-directory: packaging/mkman
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.2
+          working-directory: packaging/mkico
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.2
+          working-directory: packaging/wixcheck
+
+      # The installer authoring is checked here rather than with the
+      # package it builds, because none of what this catches stops a build:
+      # it is the authoring that compiles, installs, and quietly does
+      # something other than it reads as. It needs no Windows.
+      - run: go -C packaging/wixcheck test ./...
+      - run: go -C packaging/wixcheck run . ../windows/jacklet.wxs ../windows/jacklet.ui.wxs
+
+  # The release workflow is the only other thing that renders these, so
+  # without this a documentation change that the adaptation cannot handle
+  # would not surface until a tag was pushed.
+  manpages:
+    name: Manual pages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends groff-base
+      - run: go -C packaging/mkman test ./...
+      - name: Render and check the pages
+        run: |
+          set -euo pipefail
+          go -C packaging/mkman run . --version 0.0.0-ci
+
+          # groff reports a malformed or overflowing page as a warning and
+          # still exits 0, so any output at all is the failure.
+          warnings=$(
+            for page in man/man1/*.gz man/man7/*.gz; do
+              zcat "${page}" | groff -t -mandoc -Tutf8 -ww -z 2>&1
+            done
+          )
+          if [ -n "${warnings}" ]; then
+            echo "${warnings}" >&2
+            exit 1
+          fi
+
+  # The release workflow is the only other thing that builds this, so
+  # without it an authoring error surfaces only once a tag is pushed, one
+  # error per release. It installs what it builds too: nearly everything
+  # this package does -- the service account, the settings it writes, what
+  # an upgrade keeps -- happens at install time and is invisible to a
+  # build, so a job that only built would pass on a package that installs
+  # into nothing working.
+  installer:
+    name: Installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Stage what the archive would hold
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p stage/docs
+          # The wizard's bitmaps and the executable's own icon and version
+          # details come from the same run: the linker picks the resource
+          # object up by its GOOS and GOARCH suffix, so it has to be in
+          # place before the build rather than beside it afterwards.
+          go -C packaging/mkico run . \
+            --svg ../../assets/logo.svg \
+            --out ../../assets-out \
+            --syso ../../cmd/jacklet/resource_windows_amd64.syso \
+            --arch amd64
+          GOOS=windows GOARCH=amd64 go build -o stage/jacklet.exe ./cmd/jacklet
+          cp README.md LICENSE stage/
+          cp docs/*.md stage/docs/
+
+      # Three versions, because the interesting behaviour is what an
+      # upgrade does, and an upgrade removes the installed product before
+      # the replacing one writes anything. Reinstalling one package never
+      # reaches that. The third is for the upgrade that declines what the
+      # second kept.
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          foreach ($version in '0.0.1', '0.0.2', '0.0.3') {
+            ./packaging/windows/build.ps1 `
+              -Version $version `
+              -StageDir (Resolve-Path stage) `
+              -AssetDir (Resolve-Path assets-out) `
+              -Arch x64 `
+              -OutFile (Join-Path (Get-Location) "jacklet-$version.msi")
+          }
+
+      # The reachability of the wizard's own navigation, which can only be
+      # judged once this project's authoring and the toolset's dialog
+      # library are in one table. An intermediate is that, without the
+      # package.
+      - name: Check the wizard is reachable
+        shell: pwsh
+        run: |
+          wix build `
+            -pdbtype none -arch x64 `
+            -define ProductVersion=0.0.1 `
+            -define "StageDir=$(Resolve-Path stage)" `
+            -define "AssetDir=$(Resolve-Path assets-out)" `
+            -define RepoUrl=https://example.test `
+            -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext `
+            -out jacklet.wixipl `
+            packaging/windows/jacklet.wxs packaging/windows/jacklet.ui.wxs
+          if ($LASTEXITCODE -ne 0) { throw 'building the intermediate failed' }
+          go -C packaging/wixcheck run . -ipl ../../jacklet.wixipl
+
+      - name: Install, upgrade and remove it
+        shell: pwsh
+        run: |
+          ./packaging/windows/smoke.ps1 `
+            -MsiPath (Resolve-Path jacklet-0.0.1.msi) `
+            -UpgradeMsiPath (Resolve-Path jacklet-0.0.2.msi) `
+            -DeclineMsiPath (Resolve-Path jacklet-0.0.3.msi)
+
+  # The release workflow is the only other thing that derives these, so
+  # without this a logo edit that stops rendering would not surface until
+  # a tag was pushed.
+  assets:
+    name: Icon & bitmaps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go -C packaging/mkico test ./...
+      - run: go -C packaging/mkico run . --svg ../../assets/logo.svg --out dist --syso dist/resource_windows_amd64.syso
+
+  reuse:
+    name: REUSE lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: fsfe/reuse-action@v6
+
+  # cliff.toml is exercised for real only at tag time, when it renders the
+  # release notes. Rendering the unreleased section on every change keeps a
+  # template error inside the pull request that introduces it.
+  changelog:
+    name: Changelog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: orhun/git-cliff-action@v4
+        with:
+          version: v2.14.1
+          config: cliff.toml
+          args: --unreleased
+        env:
+          GITHUB_REPO: ${{ github.repository }}
+          GIT_CLIFF_OFFLINE: "true"

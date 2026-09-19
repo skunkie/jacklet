@@ -1,0 +1,146 @@
+{{define "head"}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.}} &middot; Jacklet</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+/* The panel is styled to match the API reference the same binary serves,
+   so the two halves read as one product: near-monochrome, colour kept for
+   status, a 3px radius and hairline rules. Inter and JetBrains Mono are
+   named first but never fetched -- a reader who has them installed gets
+   them, everyone else falls through to the system stack, which keeps the
+   panel self-contained. */
+:root {
+  --bg: #fff; --card: #fff; --subtle: #f6f6f6; --text: #1b1b1b; --muted: #757575;
+  --line: #dfdfdf; --accent: #1b1b1b; --on-accent: #fff; --idle: #6b6b6b;
+  --ok: #0a7d55; --warn: #8a5a00; --bad: #c33b3b;
+  /* The scroller bleeds by exactly this much, so the two stay in step. */
+  --card-pad: 18px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f0f0f; --card: #141414; --subtle: #1a1a1a; --text: #e7e7e7; --muted: #8e8e8e;
+    --line: #2d2d2d; --accent: #e7e7e7; --on-accent: #0f0f0f; --idle: #8e8e8e;
+    --ok: #3fb984; --warn: #d0a145; --bad: #e86b6b;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1040px; margin: 0 auto; padding: 28px 20px 72px; }
+header.top {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--line); padding-bottom: 14px; margin-bottom: 28px;
+}
+header.top h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+.mark { width: 22px; height: 22px; display: block; flex: none; }
+header.top h1 a { display: flex; align-items: center; gap: 9px; }
+header.top nav { display: flex; gap: 18px; margin-left: auto; align-items: center; }
+header.top nav a { font-size: 13px; color: var(--muted); text-decoration: none; }
+header.top nav a:hover { color: var(--text); }
+a { color: var(--text); text-underline-offset: 2px; }
+.card {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 3px; padding: var(--card-pad); margin-bottom: 14px;
+}
+h2 { font-size: 13px; font-weight: 600; color: var(--text); margin: 0 0 14px; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 500; }
+th, td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.pill {
+  display: inline-block; font-size: 11px; font-weight: 500; padding: 2px 9px;
+  border-radius: 999px; background: var(--subtle); border: 1px solid var(--line);
+}
+.ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); } .idle { color: var(--idle); }
+.muted { color: var(--muted); font-size: 13px; }
+.note { padding: 10px 13px; border-radius: 3px; margin-bottom: 16px; border: 1px solid currentColor; font-size: 13px; }
+.note.good { color: var(--ok); } .note.bad { color: var(--bad); }
+label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 5px; }
+input[type=text], input[type=password], select {
+  width: 100%; padding: 7px 10px; border-radius: 3px; font: inherit; font-size: 13px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text);
+}
+input[type=text]:focus, input[type=password]:focus, select:focus {
+  outline: none; border-color: var(--muted);
+}
+.field { margin-bottom: 15px; }
+.field .muted { margin-top: 4px; }
+button {
+  font: inherit; font-size: 13px; font-weight: 500; padding: 6px 15px; border-radius: 999px;
+  cursor: pointer; background: var(--accent); color: var(--on-accent); border: 1px solid transparent;
+}
+button.plain { background: transparent; color: var(--muted); border-color: var(--line); }
+button.plain:hover { color: var(--text); }
+.row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.row .grow { flex: 1 1 220px; }
+code {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  background: var(--subtle); border-radius: 3px; padding: 1px 5px;
+}
+.break { word-break: break-all; }
+
+/* Wide tables keep their columns and scroll inside their card rather than
+   pushing the whole page sideways. The wrappers carry tabindex="0" so that a
+   keyboard-only reader can still reach a column the scroller has cut off;
+   that costs a tab stop on wide screens, where nothing is cut off. */
+.scroll { overflow-x: auto; }
+.scroll > table { min-width: 560px; }
+
+@media (max-width: 680px) {
+  .wrap { padding: 20px 14px 56px; }
+  header.top { gap: 10px 14px; padding-bottom: 12px; margin-bottom: 20px; }
+  header.top nav { margin-left: 0; width: 100%; gap: 14px; flex-wrap: wrap; }
+  :root { --card-pad: 14px; }
+  /* Cards already carry the gutter; let the scroller use the full width so
+     the cut-off column is visibly cut off rather than hidden under padding. */
+  .scroll { margin: 0 calc(-1 * var(--card-pad)); padding: 0 var(--card-pad); }
+  .row { gap: 12px; }
+  /* Below 16px iOS zooms the page in when a field takes focus. */
+  input[type=text], input[type=password], select { font-size: 16px; }
+  /* Search and test forms stack; the status rows keep flowing side by side.
+     .grow is named explicitly because .row .grow outranks a bare
+     form.row > div, and would otherwise keep its 220px basis. */
+  form.row > div, form.row > div.grow { flex: 1 1 100%; }
+  form.row > button { width: 100%; }
+}
+</style>
+</head>
+<body><div class="wrap">
+{{end}}
+
+{{define "nav"}}
+<header class="top">
+  <h1><a href="/admin" style="color:inherit;text-decoration:none"><svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><path fill="currentColor" d="{{mark}}"/></svg>Jacklet</a></h1>
+  <nav>
+    <a href="/admin">Dashboard</a>
+    <a href="/admin/search">Search</a>
+    <a href="/docs">API docs</a>
+    <form method="post" action="/admin/logout" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{.}}">
+      <button class="plain" type="submit">Sign out</button>
+    </form>
+  </nav>
+</header>
+{{end}}
+
+{{define "foot"}}
+</div></body></html>
+{{end}}
+
+{{define "torrentLink"}}
+  {{if .Download}}<a href="{{.Download}}" title="{{.Link}}">Torrent</a>
+  {{else}}<span class="muted">—</span>{{end}}
+{{end}}
+
+{{define "magnetLink"}}
+  {{if .Magnet}}<a href="{{.Magnet}}">Magnet</a>
+  {{else}}<span class="muted">—</span>{{end}}
+{{end}}

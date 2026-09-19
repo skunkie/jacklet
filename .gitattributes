@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# Check every file out with LF, on Windows as much as anywhere else. The
+# golden Torznab documents are compared byte for byte against freshly
+# rendered output, which always uses LF, so a CRLF checkout would fail the
+# comparison for no reason other than the platform.
+* text=auto eol=lf
+
+# Fixtures are compared verbatim, so leave them untouched entirely rather
+# than trusting the text heuristic.
+**/testdata/** -text

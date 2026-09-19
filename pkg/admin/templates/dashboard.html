@@ -1,0 +1,70 @@
+{{template "head" "Dashboard"}}
+{{template "nav" .CSRFToken}}
+
+<div class="card">
+  <h2>Status</h2>
+  <div class="row" style="gap:32px">
+    <div>
+      <div class="muted">Database</div>
+      {{if .Healthy}}<span class="pill ok">healthy</span>{{else}}<span class="pill bad">unreachable</span>{{end}}
+    </div>
+    <div>
+      <div class="muted">Indexers</div>
+      <strong>{{len .Indexers}}</strong>
+    </div>
+    <div>
+      <div class="muted">Stored torrents</div>
+      <strong>{{.Total}}</strong>
+    </div>
+  </div>
+</div>
+
+{{if .Errors}}
+<div class="card">
+  <h2>Definition errors</h2>
+  <p class="muted" style="margin-top:-6px">These files could not be parsed. An indexer that worked before keeps serving its last good version.</p>
+  {{range .Errors}}<div class="bad break"><code>{{.}}</code></div>{{end}}
+</div>
+{{end}}
+
+<div class="card">
+  <h2>Indexers</h2>
+  {{if not .Indexers}}
+    <p class="muted">No definitions found. Drop a Cardigann YAML file into the definitions directory.</p>
+  {{else}}
+  <div class="scroll" tabindex="0" role="region" aria-label="Indexers">
+  <table>
+    <thead><tr>
+      <th>Name</th><th>State</th><th class="num">Stored</th><th>Newest</th><th>Login</th><th></th>
+    </tr></thead>
+    <tbody>
+    {{range .Indexers}}
+      <tr>
+        <td>
+          <a href="/admin/indexers/{{.ID}}">{{.Name}}</a>
+          <div class="muted"><code>{{.ID}}</code>{{if .Language}} &middot; {{.Language}}{{end}}{{if .Type}} &middot; {{.Type}}{{end}}</div>
+        </td>
+        <td>
+          {{if eq .State "ok"}}<span class="pill ok">ok</span>
+          {{else if eq .State "backoff"}}<span class="pill bad">backoff</span>
+          {{else if eq .State "failing"}}<span class="pill warn">failing</span>
+          {{else}}<span class="pill idle">idle</span>{{end}}
+          {{if .BackedOff}}<div class="muted">retry in {{until .NextAllowed}}</div>{{end}}
+          {{if and .Failures (not .BackedOff)}}<div class="muted">{{.Failures}} failed</div>{{end}}
+        </td>
+        <td class="num">{{.Torrents}}</td>
+        <td class="muted">{{if .Newest.IsZero}}&mdash;{{else}}{{since .Newest}}{{end}}</td>
+        <td>
+          {{if .RequiresLogin}}
+            {{if .Authenticated}}<span class="pill ok">signed in</span>{{else}}<span class="pill warn">not signed in</span>{{end}}
+          {{else}}<span class="muted">none</span>{{end}}
+        </td>
+        <td><a href="/admin/indexers/{{.ID}}">Configure</a></td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{end}}
+</div>
+{{template "foot"}}

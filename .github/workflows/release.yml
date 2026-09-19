@@ -1,0 +1,536 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # Allows a dry run against a branch: the binaries are built and uploaded
+  # as workflow artifacts, the image is built and discarded, and nothing is
+  # published.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+  # nfpm builds the .deb and the .rpm. Pinned rather than @latest so a
+  # rebuild of an old tag produces the same packages.
+  NFPM_VERSION: v2.47.0
+  # git-cliff renders the release notes from the commit log, using
+  # cliff.toml. Pinned for the same reason as nfpm.
+  GIT_CLIFF_VERSION: v2.14.1
+  # The WiX toolset builds the MSI, with the extensions the package uses.
+  # Pinned for the same reason as nfpm.
+  WIX_VERSION: 6.0.1
+  # The Fedora the rpm is installed into for its smoke test. Pinned for
+  # the same reason as the tools above, and because a new major release
+  # should not change what a rebuild of an old tag exercises. It is the
+  # stable release at the time of writing; bump it deliberately.
+  FEDORA_VERSION: "44"
+  # Goes into the packages as the deb's Homepage and the rpm's URL. Not
+  # derived from github.repository, which is where the build happens rather
+  # than where the project lives.
+  REPO_URL: https://github.com/torrplay/jacklet
+
+jobs:
+  binaries:
+    name: Binaries (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 } # Intel Macs
+          - { goos: darwin, goarch: arm64 } # Apple silicon
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # A tag push releases that tag; a manual run is a dry run, and gets a
+      # version derived from the commit so its artifacts are still labelled.
+      - name: Resolve version
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "VERSION=${GITHUB_REF_NAME}" >>"${GITHUB_ENV}"
+          else
+            echo "VERSION=0.0.0-${GITHUB_SHA::12}" >>"${GITHUB_ENV}"
+          fi
+
+          # The date this release was made, rather than the date it is
+          # being built: it is what the manual pages carry on their .TH
+          # line and what nfpm timestamps the packages with, so rebuilding
+          # a tag reproduces it, and the two architectures agree even when
+          # their jobs straddle a month boundary.
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >>"${GITHUB_ENV}"
+
+      # The icon and the version details reach the executable through a
+      # resource object the linker picks up by its GOOS and GOARCH suffix.
+      # Generated here rather than committed, so it cannot disagree with
+      # the logo, and only for Windows, which is the only target that has
+      # one.
+      - name: Build the Windows resource object
+        if: matrix.goos == 'windows'
+        run: |
+          set -euo pipefail
+          go -C packaging/mkico run . \
+            --svg ../../assets/logo.svg \
+            --out dist-assets \
+            --syso "../../cmd/jacklet/resource_windows_${{ matrix.goarch }}.syso" \
+            --arch "${{ matrix.goarch }}" \
+            --version "${VERSION}"
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          # The SQLite driver is pure Go, so every target cross-compiles
+          # from this runner without a C toolchain.
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          name="jacklet"
+          if [ "${GOOS}" = "windows" ]; then
+            name="jacklet.exe"
+          fi
+
+          # -trimpath keeps the runner's absolute paths out of the binary;
+          # -s -w drop the symbol and DWARF tables.
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${VERSION}" \
+            -o "dist/${name}" ./cmd/jacklet
+
+      - name: Package
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          stem="jacklet_${VERSION}_${GOOS}_${GOARCH}"
+
+          # Definitions are supplied by the operator and none are in the
+          # repository, so the archive carries an empty directory beside
+          # the binary, which is where Jacklet resolves them.
+          mkdir -p "stage/${stem}/definitions"
+          cp -r dist/. "stage/${stem}/"
+          cp README.md LICENSE "stage/${stem}/"
+
+          # The README is a landing page that links into docs/, so the
+          # archive carries that directory too -- otherwise the links
+          # point at a branch that may have moved past this tag.
+          cp -r docs "stage/${stem}/"
+
+          mkdir -p out
+          if [ "${GOOS}" = "windows" ]; then
+            (cd stage && zip -qr "../out/${stem}.zip" "${stem}")
+          else
+            tar -czf "out/${stem}.tar.gz" -C stage "${stem}"
+          fi
+
+      # The manual pages are the same on both architectures, but they are
+      # built per job because each job packages on its own runner.
+      - name: Manual pages
+        if: matrix.goos == 'linux'
+        # Its own module, so go-md2man stays out of Jacklet's dependencies;
+        # the paths it reads and writes are relative to that directory.
+        run: go -C packaging/mkman run . --version "${VERSION}"
+
+      # nfpm needs neither dpkg-deb nor rpmbuild nor a machine of the target
+      # architecture, so both architectures are packaged on this runner from
+      # the binary built above. The packages land in out/ beside the archive.
+      - name: Packages (deb/rpm)
+        if: matrix.goos == 'linux'
+        env:
+          ARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          for packager in deb rpm; do
+            go run "github.com/goreleaser/nfpm/v2/cmd/nfpm@${NFPM_VERSION}" pkg \
+              --config packaging/nfpm.yaml \
+              --packager "${packager}" \
+              --target out/
+          done
+          ls -l out/
+
+      - name: Smoke-test the binary
+        # Only the runner's own platform can be executed here; the rest are
+        # verified by the fact that they compiled.
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: |
+          set -euo pipefail
+          ./dist/jacklet version
+          ./dist/jacklet version | grep -q '^jacklet '
+
+      # The runner is Debian-derived and runs systemd, so the .deb for its
+      # own architecture can be installed for real. The maintainer scripts
+      # are the part most likely to break, and nothing else exercises them.
+      - name: Smoke-test the package
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: |
+          set -euo pipefail
+          deb=$(ls out/*.deb)
+
+          # nfpm expands an unset variable to nothing rather than failing,
+          # so an empty field here means the packaging step lost REPO_URL.
+          dpkg-deb -f "${deb}" Homepage | grep -q .
+
+          sudo dpkg --install "${deb}"
+          getent passwd jacklet
+          test -x /usr/bin/jacklet
+          test -f /etc/jacklet/jacklet.env
+          systemd-analyze verify /usr/lib/systemd/system/jacklet.service
+
+          # nfpm reports a missing file, but packages an empty man7
+          # directory without complaint, so what is checked is that every
+          # page rendered a moment ago is a page the package installed.
+          # The count comes from the render rather than a number written
+          # here, which would say only what was true when it was written;
+          # which pages exist at all is pinned by mkman's own tests.
+          #
+          # As an assignment this takes the pipeline's status, so a glob
+          # that matches nothing fails here rather than counting zero.
+          rendered=$(ls man/man7/*.7.gz | wc -l)
+          test "${rendered}" -gt 0
+
+          test -f /usr/share/man/man1/jacklet.1.gz
+          test "$(ls /usr/share/man/man7/jacklet-*.7.gz | wc -l)" -eq "${rendered}"
+
+          # A first install leaves the service stopped and not enabled, so
+          # that an endpoint with no API key set does not reach the network.
+          # is-enabled exits non-zero for a disabled unit.
+          [ "$(systemctl is-enabled jacklet.service || true)" = disabled ]
+
+          # Installing over itself takes the upgrade branch of the
+          # maintainer scripts, which no other step reaches.
+          sudo dpkg --install "${deb}"
+
+          sudo dpkg --purge jacklet
+          test ! -e /usr/bin/jacklet
+
+      # The .rpm shares its maintainer scripts with the .deb, but the two
+      # packagers call them with entirely different arguments -- dpkg with
+      # "configure" and "remove", rpm with a count of packages -- so the
+      # step above is no evidence at all that these run correctly. There is
+      # no RPM distribution among the runner images, so the package is
+      # installed for real inside a Fedora container instead.
+      #
+      # A container has no manager running, and the scriptlets skip their
+      # whole systemd block when /run/systemd/system is absent, so this
+      # proves that they run, dispatch on rpm's numeric arguments, and
+      # create the account and the files. It does not exercise the
+      # daemon-reload, or the restart an upgrade would do.
+      - name: Smoke-test the rpm
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: |
+          set -euo pipefail
+          # The container is given only the packages, so the number of
+          # pages that were rendered is counted here and passed in. As an
+          # assignment this takes the pipeline's status, so rendering
+          # nothing fails here rather than counting zero.
+          rendered=$(ls man/man7/*.7.gz | wc -l)
+          test "${rendered}" -gt 0
+
+          docker run --rm -i \
+            -v "${PWD}/out:/out:ro" \
+            -e "MAN7_RENDERED=${rendered}" \
+            "fedora:${FEDORA_VERSION}" bash -s <<'SCRIPT'
+          set -euo pipefail
+
+          # The base image carries neither systemd-analyze nor useradd, and
+          # the scriptlets need the latter to create the service account.
+          dnf install -y --setopt=install_weak_deps=False systemd shadow-utils >/dev/null
+
+          rpm_file=$(ls /out/*.rpm)
+
+          # nfpm expands an unset variable to nothing rather than failing,
+          # so an empty URL means the packaging step lost REPO_URL. rpm
+          # reports a tag it does not carry as "(none)".
+          url=$(rpm --query --package --queryformat '%{URL}' "${rpm_file}")
+          test -n "${url}"
+          test "${url}" != "(none)"
+
+          rpm --install "${rpm_file}" 2>&1 | tee /tmp/install.log
+          getent passwd jacklet
+          test -x /usr/bin/jacklet
+          test -f /etc/jacklet/jacklet.env
+          systemd-analyze verify /usr/lib/systemd/system/jacklet.service
+
+          # nfpm reports a missing file, but packages an empty man7
+          # directory without complaint, so what is checked is that every
+          # page the release rendered is a page the package installed.
+          test -f /usr/share/man/man1/jacklet.1.gz
+          test "$(ls /usr/share/man/man7/jacklet-*.7.gz | wc -l)" -eq "${MAN7_RENDERED}"
+
+          # A first install leaves the service stopped and not enabled, so
+          # that an endpoint with no API key set does not reach the network.
+          # There is no manager running in here for systemctl is-enabled to
+          # ask, and it would report the unit as disabled for that reason
+          # alone, so what is checked is the symlink enabling would create.
+          test ! -e /etc/systemd/system/multi-user.target.wants/jacklet.service
+
+          # The first-install branch of postinstall is the one that prints
+          # the setup instructions, so its message is what distinguishes the
+          # two branches from outside.
+          grep -q 'Jacklet is installed but not started' /tmp/install.log
+
+          # --force reinstalls the same version as an upgrade transaction,
+          # which is how the upgrade branch of the scriptlets -- the one
+          # that keeps a running service running and stays quiet -- is
+          # reached without building a second version.
+          rpm --upgrade --force "${rpm_file}" 2>&1 | tee /tmp/upgrade.log
+          ! grep -q 'Jacklet is installed but not started' /tmp/upgrade.log
+
+          # The unit must still not be enabled after an upgrade either.
+          test ! -e /etc/systemd/system/multi-user.target.wants/jacklet.service
+
+          rpm --erase jacklet
+          test ! -e /usr/bin/jacklet
+          SCRIPT
+
+      # out/ holds the archive for every target, plus the .deb and .rpm on
+      # Linux.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: jacklet-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: out/
+          if-no-files-found: error
+
+  # The icon and the wizard bitmaps, derived from the logo. They are built
+  # here rather than on the Windows runner so that runner needs no Go
+  # toolchain, and once rather than per architecture so both packages
+  # carry byte-identical artwork.
+  assets:
+    name: Icon & bitmaps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go -C packaging/mkico run . --svg ../../assets/logo.svg --out ../../out-assets
+      # Deliberately not named jacklet-*: the publish step takes every
+      # artifact matching that, and these are build inputs rather than
+      # something a user downloads.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: build-assets
+          path: out-assets/
+          if-no-files-found: error
+
+  msi:
+    name: Installer (${{ matrix.goarch }})
+    needs: [binaries, assets]
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goarch: amd64, wixarch: x64 }
+          - { goarch: arm64, wixarch: arm64 }
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "VERSION=${GITHUB_REF_NAME}" >>"${GITHUB_ENV}"
+          else
+            echo "VERSION=0.0.0-${GITHUB_SHA::12}" >>"${GITHUB_ENV}"
+          fi
+
+      # The archive that was already built, rather than a second build:
+      # the installer then ships the byte-identical binary the archive
+      # ships, with the same trimmed paths and the same timestamp, and no
+      # Go toolchain is needed here.
+      - uses: actions/download-artifact@v8
+        with:
+          name: jacklet-windows-${{ matrix.goarch }}
+          path: archive
+      - uses: actions/download-artifact@v8
+        with:
+          name: build-assets
+          path: assets-out
+
+      - name: Unpack the archive
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem archive -Filter *.zip | Select-Object -First 1
+          Expand-Archive -Path $zip.FullName -DestinationPath unpacked
+          # The archive holds one directory, named for the release.
+          $stage = Get-ChildItem unpacked -Directory | Select-Object -First 1
+          "STAGE_DIR=$($stage.FullName)" >> $env:GITHUB_ENV
+
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          ./packaging/windows/build.ps1 `
+            -Version $env:VERSION `
+            -StageDir $env:STAGE_DIR `
+            -AssetDir (Resolve-Path assets-out) `
+            -Arch ${{ matrix.wixarch }} `
+            -WixVersion $env:WIX_VERSION `
+            -RepoUrl $env:REPO_URL `
+            -OutFile "out/jacklet_$($env:VERSION)_windows_${{ matrix.goarch }}.msi"
+
+      # Two further packages, each a version on, so the smoke test can
+      # exercise real upgrades: an upgrade removes the installed product
+      # before the replacing one writes anything, and reinstalling one
+      # package never reaches that. Neither is published.
+      - name: Build later versions to upgrade to
+        if: matrix.goarch == 'amd64'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path upgrade | Out-Null
+          foreach ($version in '99.0.0', '99.0.1') {
+            ./packaging/windows/build.ps1 `
+              -Version $version `
+              -StageDir $env:STAGE_DIR `
+              -AssetDir (Resolve-Path assets-out) `
+              -Arch ${{ matrix.wixarch }} `
+              -WixVersion $env:WIX_VERSION `
+              -RepoUrl $env:REPO_URL `
+              -OutFile (Join-Path (Get-Location) "upgrade/jacklet-$version.msi")
+          }
+
+      # Only the runner's own architecture can be installed here, which is
+      # the same bargain the Linux packages strike: the other is verified
+      # by the fact that it built and passed the installer's own
+      # validation.
+      - name: Smoke-test the installer
+        if: matrix.goarch == 'amd64'
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem out -Filter *.msi | Select-Object -First 1
+          ./packaging/windows/smoke.ps1 `
+            -MsiPath $msi.FullName `
+            -UpgradeMsiPath (Resolve-Path upgrade/jacklet-99.0.0.msi) `
+            -DeclineMsiPath (Resolve-Path upgrade/jacklet-99.0.1.msi)
+
+      # Named rather than the whole directory: an artifact matching
+      # jacklet-* is published verbatim, so anything else the build left
+      # beside the installer would reach the release too.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: jacklet-msi-windows-${{ matrix.goarch }}
+          path: out/*.msi
+          if-no-files-found: error
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      # Only a tag push publishes; a manual run builds and throws away, so
+      # the workflow can be exercised without pushing an image.
+      - name: Log in to GHCR
+        if: github.ref_type == 'tag'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          # v1.2.3 publishes 1.2.3, 1.2 and latest. A pre-release such as
+          # v1.2.3-rc.1 publishes 1.2.3-rc.1 alone: {{major}}.{{minor}} and
+          # latest both skip pre-releases.
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=branch
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.ref_type == 'tag' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    name: Publish release
+    needs: [binaries, docker, msi]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # The whole history, and the tags with it: git-cliff needs the commits
+      # between the previous tag and this one.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # The binaries job names each of its uploads after the target it
+      # built, and the pattern takes those and nothing else. The docker job
+      # uploads a build record too, a .dockerbuild file that backs the build
+      # summary in the Actions UI and belongs there rather than on the
+      # release, where every file is something a user downloads and runs.
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: jacklet-*
+          path: artifacts
+          merge-multiple: true
+
+      # The notes are the commit subjects since the previous tag, grouped
+      # by type. cliff.toml says how they are grouped and worded.
+      - name: Release notes
+        uses: orhun/git-cliff-action@v4
+        id: changelog
+        with:
+          version: ${{ env.GIT_CLIFF_VERSION }}
+          config: cliff.toml
+          args: --latest
+        env:
+          OUTPUT: RELEASE_NOTES.md
+          # The commit and compare links in the notes are built from this,
+          # so they point at the repository publishing the release.
+          GITHUB_REPO: ${{ github.repository }}
+          # The notes are rendered from the commit log alone, and this keeps
+          # git-cliff from reaching for the GitHub API to enrich them.
+          GIT_CLIFF_OFFLINE: "true"
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd artifacts
+          # Each pattern is named rather than globbing the directory, so a
+          # release that lost a whole class of artifact fails here instead
+          # of publishing quietly without it.
+          sha256sum ./*.tar.gz ./*.zip ./*.deb ./*.rpm ./*.msi >SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: artifacts/*
+          body_path: ${{ steps.changelog.outputs.changelog }}

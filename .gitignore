@@ -1,0 +1,69 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# These rules cover Jacklet's *default* paths. DB_PATH, CONFIG_DIR and
+# DEFINITIONS_DIR are all configurable, so pointing one of them at another
+# directory inside this repo puts it outside these rules — most importantly
+# CONFIG_DIR, which holds tracker credentials in plaintext. Keep runtime
+# data outside the working tree, or extend this file.
+
+# Indexer definitions are supplied by the operator, not shipped with
+# Jacklet: they are third-party data describing specific torrent sites, and
+# they change independently of this code. See the README for where to get
+# them.
+/definitions/
+
+# Per-tracker settings, which hold tracker credentials in plaintext.
+/config/
+
+# The environment file docker-compose.yml reads, which holds the API key
+# and, if the admin panel is enabled, its password.
+/.env
+
+# The scraped-results store, plus the two sidecar files SQLite keeps beside
+# it while the database is open in WAL mode.
+*.db
+*.db-shm
+*.db-wal
+
+# Built binary, from "go build ./cmd/jacklet" in the repository root.
+/jacklet
+
+# The same, from "go build" in the manual page generator's own module.
+/packaging/mkman/mkman
+
+# Release build output: the cross-compiled binary, the staged archive tree
+# and the finished archives and packages, as the release workflow lays them
+# out. Building a package locally with nfpm produces the same directories.
+/dist/
+/stage/
+/out/
+
+# Manual pages, rendered from markdown at packaging time.
+/man/
+
+# Go test artifacts: compiled test binaries from "go test -c" and coverage
+# profiles from "go test -coverprofile".
+*.test
+*.out
+
+# Editor workspace settings, which are per-developer and not part of the
+# project.
+/.vscode/
+
+# Debug binaries built by the VS Code Go extension, which appends a random
+# suffix to the name.
+__debug_bin*
+
+# Derived from assets/logo.svg by packaging/mkico at build time. The SVG is
+# the source, so an icon can never disagree with the logo it came from.
+/packaging/mkico/dist/
+/packaging/mkico/mkico
+/packaging/wixcheck/wixcheck
+/cmd/jacklet/*.syso
+
+# Built by packaging/windows/build.ps1.
+/packaging/windows/obj/
+*.msi
+*.wixpdb

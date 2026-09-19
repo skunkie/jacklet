@@ -1,0 +1,344 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 TorrPlay
+
+SPDX-License-Identifier: MIT
+
+The Windows installer.
+
+It mirrors what the Debian and RPM packages do, which is where to look
+when changing either: the program goes somewhere the operator does not
+edit, the state goes somewhere the operator owns and an uninstall leaves
+alone, the service runs as an unprivileged account, and the settings live
+in one place that survives an upgrade.
+
+The one deliberate difference is that this starts the service. The
+packages do not, because an unconfigured Jacklet serves its indexer
+endpoints to anyone who can reach the port; here the wizard has already
+required an API key by the time anything is installed, so the hazard that
+policy exists to avoid cannot arise.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+     xmlns:fw="http://wixtoolset.org/schemas/v4/wxs/firewall">
+
+  <!--
+    The upgrade code is identity, not a version: it is what tells Windows
+    that one package supersedes another. Never regenerate it.
+
+    One code for every architecture, deliberately. The packages differ
+    only in the binary they carry: both install to ProgramFiles64Folder,
+    both own the Jacklet service, the same keys and the same ProgramData,
+    so two of them are not two products but one product installed twice,
+    each believing it owns the other's service. Sharing the code is what
+    makes the case that produces it, an ARM64 machine running the x64 build
+    under emulation and then installing the native one, a major upgrade,
+    which is what it should have been.
+
+    A code per architecture was the earlier choice, on the grounds that a
+    shared one would replace an x64 install with a binary the machine
+    might not run, over a different layout. Neither holds: the layout is
+    the same, and Windows refuses a package built for a processor it does
+    not support before any of this is reached, so the only machine that
+    can install both is the one that can run both.
+  -->
+  <?define UpgradeGuid = "942AFA6C-455B-4AB5-B7B4-389DEAEA9E0B" ?>
+
+  <Package Name="Jacklet"
+           Manufacturer="TorrPlay"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="$(var.UpgradeGuid)"
+           Scope="perMachine"
+           Compressed="yes"
+           InstallerVersion="500">
+
+    <!--
+      AllowSameVersionUpgrades matters for pre-releases: an installer
+      version is three numbers with no suffix, so v1.2.3-rc.1 and
+      v1.2.3-rc.2 both become 1.2.3, and without this the second would
+      refuse to install over the first.
+    -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  Schedule="afterInstallValidate"
+                  DowngradeErrorMessage="A newer version of Jacklet is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="JackletIcon" SourceFile="$(var.AssetDir)\jacklet.ico" />
+    <Property Id="ARPPRODUCTICON" Value="JackletIcon" />
+    <Property Id="ARPHELPLINK" Value="$(var.RepoUrl)" />
+    <Property Id="ARPURLINFOABOUT" Value="$(var.RepoUrl)" />
+
+    <!--
+      Without an API key every indexer endpoint answers anyone who can
+      reach the port, so an install has to have one. Which check applies
+      depends on how the install was started: the wizard refuses to leave
+      its settings page without a key, and this covers the case where
+      there is no wizard to refuse.
+
+      It has to be limited that way. Launch conditions are evaluated at
+      the very start of the sequence, before any dialog has run, so a
+      condition on a value the wizard collects would fail every
+      interactive install before it could be asked for. UILevel is 5 only
+      when the full wizard is running.
+
+      An upgrade needs no key on the command line either, because the key
+      already configured is recovered into JACKLETAPIKEY before this is
+      evaluated. That is the whole of it: the related-product properties
+      are set by FindRelatedProducts, which runs after launch conditions,
+      so a clause naming one here could never be true.
+    -->
+    <Launch Condition="Installed OR JACKLETAPIKEY&lt;&gt;&quot;&quot; OR UILevel=5"
+            Message="Set JACKLETAPIKEY to install without the wizard. Jacklet serves its indexer endpoints to anyone who can reach its port until an API key is set." />
+
+    <!-- Program Files: replaced wholesale on an upgrade. -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Jacklet">
+        <Directory Id="DOCSFOLDER" Name="docs" />
+      </Directory>
+    </StandardDirectory>
+
+    <!--
+      ProgramData: everything the operator owns. Permanent, so removing
+      Jacklet leaves the database, the definitions and the per-indexer
+      tracker credentials behind, the way removing the Debian package
+      leaves /var/lib/jacklet behind.
+    -->
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DATAFOLDER" Name="Jacklet">
+        <Directory Id="DEFSFOLDER" Name="definitions" />
+        <Directory Id="CFGFOLDER" Name="config" />
+        <Directory Id="LOGSFOLDER" Name="logs" />
+      </Directory>
+    </StandardDirectory>
+
+    <ComponentGroup Id="Program" Directory="INSTALLFOLDER">
+      <Component Id="JackletExe">
+        <File Id="JackletExeFile" Source="$(var.StageDir)\jacklet.exe" KeyPath="yes" />
+
+        <ServiceInstall Id="JackletService"
+                        Name="Jacklet"
+                        DisplayName="Jacklet Torznab indexer proxy"
+                        Description="Serves torrent sites described by Cardigann definitions over a Torznab API."
+                        Type="ownProcess"
+                        Start="auto"
+                        ErrorControl="normal"
+                        Account="NT AUTHORITY\LocalService"
+                        Vital="yes">
+          <!-- The counterpart of the unit's Restart=on-failure and
+               RestartSec=5s. -->
+          <util:ServiceConfig FirstFailureActionType="restart"
+                              SecondFailureActionType="restart"
+                              ThirdFailureActionType="none"
+                              RestartServiceDelayInSeconds="5" />
+          <ServiceConfig FailureActionsWhen="failedToStopOrReturnedError"
+                         OnInstall="yes"
+                         OnReinstall="yes" />
+        </ServiceInstall>
+        <ServiceControl Id="JackletServiceControl"
+                        Name="Jacklet"
+                        Start="install"
+                        Stop="both"
+                        Remove="uninstall"
+                        Wait="yes" />
+
+      </Component>
+
+      <!--
+        The settings an installed service runs with, one value each.
+
+        They live under Jacklet's own key, not the service's, which keeps
+        them out of reach of two things that own everything under the
+        service key: the service account, which would be able to rewrite
+        its own ImagePath, and the removal step of an upgrade, which runs
+        after the replacing package has already decided what to write.
+
+        Nothing here is permanent or protected from being overwritten. An
+        upgrade rewrites these from the properties above, which were read
+        back from these same values before the old package was removed,
+        so what an operator configured is what gets written again. An
+        uninstall takes them with it, so a later install starts clean.
+      -->
+      <Component Id="ServiceSettings" Guid="6E03CF85-B1D9-40E7-C366-D25F81AEC70B">
+        <RegistryKey Root="HKLM" Key="SOFTWARE\Jacklet\Settings"
+                     ForceCreateOnInstall="yes" ForceDeleteOnUninstall="yes">
+          <RegistryValue Name="ApiKey" Type="string" Value="[JACKLETAPIKEY]" KeyPath="yes" />
+          <RegistryValue Name="Port" Type="string" Value="[JACKLETPORT]" />
+          <RegistryValue Name="ConfigDir" Type="string" Value="[JACKLETCONFIGDIR]" />
+          <RegistryValue Name="DatabasePath" Type="string" Value="[JACKLETDBPATH]" />
+          <RegistryValue Name="DefinitionsDir" Type="string" Value="[JACKLETDEFINITIONSDIR]" />
+          <RegistryValue Name="LogFile" Type="string" Value="[JACKLETLOGFILE]" />
+          <util:PermissionEx User="LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
+        </RegistryKey>
+      </Component>
+
+      <!--
+        The admin password hash, when there is one to carry forward. In a
+        component of its own and conditioned, because the service writes
+        this value itself on the first start after an install collected a
+        password, and an empty one written here would show up as a
+        setting that had been configured to nothing.
+      -->
+      <Component Id="AdminPasswordHash" Guid="8A4B2D17-3F60-4E95-B8C1-5D7E09A3F624"
+                 Condition="JACKLETADMINPASSWORDHASH&lt;&gt;&quot;&quot;">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Jacklet\Settings"
+                       Name="AdminPasswordHash" Type="string"
+                       Value="[JACKLETADMINPASSWORDHASH]" KeyPath="yes" />
+      </Component>
+
+      <!--
+        Jacklet carries no message resource of its own, so the source
+        points at the generic one and the event text is the message
+        Jacklet writes. Declared here rather than registered by a custom
+        action so that it is removed with everything else.
+      -->
+      <Component Id="EventLogSource">
+        <RegistryKey Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\EventLog\Application\Jacklet"
+                     ForceDeleteOnUninstall="yes">
+          <RegistryValue Name="EventMessageFile" Type="expandable"
+                         Value="%SystemRoot%\System32\EventCreate.exe" KeyPath="yes" />
+          <RegistryValue Name="TypesSupported" Type="integer" Value="7" />
+        </RegistryKey>
+      </Component>
+
+      <!-- One file each: a component holding several unversioned files
+           cannot have its guid generated from its keypath. -->
+      <Component Id="Readme">
+        <File Id="ReadmeFile" Source="$(var.StageDir)\README.md" KeyPath="yes" />
+      </Component>
+      <Component Id="License">
+        <File Id="LicenseFile" Source="$(var.StageDir)\LICENSE" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Files authors a component per file itself, so it sits in the
+         group rather than inside a component of its own. -->
+    <ComponentGroup Id="Docs" Directory="DOCSFOLDER">
+      <Files Include="$(var.StageDir)\docs\**" />
+    </ComponentGroup>
+
+    <!--
+      Jacklet's own key, which is not the service key. The service account
+      is granted write access here so that the first start can exchange
+      the installer's plaintext password for a hash and delete the
+      plaintext. The same grant on the service key would let the service
+      rewrite its own ImagePath, so it is deliberately not made there.
+    -->
+    <ComponentGroup Id="ProductState" Directory="INSTALLFOLDER">
+      <!-- Removing this key removes every subkey under it, which is what
+           takes Settings, Setup and Installer with it: Windows Installer
+           removes the values a component wrote and leaves the key that
+           held them, so a key has to be given up explicitly. -->
+      <Component Id="ProductKey" Guid="C0C0B5A2-9D3C-4A1F-9B2E-6E0A1D7C4F31">
+        <RegistryKey Root="HKLM" Key="SOFTWARE\Jacklet"
+                     ForceCreateOnInstall="yes" ForceDeleteOnUninstall="yes">
+          <RegistryValue Name="InstallFolder" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+          <util:PermissionEx User="LocalService" GenericRead="yes" GenericWrite="yes" Delete="yes" />
+        </RegistryKey>
+      </Component>
+
+      <!--
+        The admin password the wizard collected, in plaintext, for exactly
+        as long as it takes the service to start once, after which the
+        first start replaces it with a hash and deletes it.
+
+        An installer cannot hash it itself: Windows Installer has no way
+        to compute one, and handing it to a helper would put it on a
+        command line, readable by every other process on the machine for
+        as long as that helper ran. Writing it here instead narrows the
+        exposure to a key only administrators and the service can read.
+
+        It does not eliminate it. A verbose installer log records every
+        value written, so a log asked for with /l*v holds this one, the
+        same as it holds the API key. An operator who wants neither on
+        disk at any point leaves this empty and sets the hash afterwards
+        with "jacklet service config", which reads it from standard
+        input.
+
+        Not permanent, so a failed install rolls it back.
+      -->
+      <Component Id="AdminPasswordBootstrap" Guid="7E1D4C88-2B36-4F0A-A5D9-13B8C2E6A947"
+                 Condition="JACKLETADMINPASSWORD&lt;&gt;&quot;&quot;">
+        <RegistryKey Root="HKLM" Key="SOFTWARE\Jacklet\Setup"
+                     ForceCreateOnInstall="yes" ForceDeleteOnUninstall="yes">
+          <RegistryValue Name="AdminPassword" Type="string" Value="[JACKLETADMINPASSWORD]" KeyPath="yes" />
+          <util:PermissionEx User="LocalService" GenericRead="yes" GenericWrite="yes" Delete="yes" />
+        </RegistryKey>
+      </Component>
+    </ComponentGroup>
+
+    <!--
+      The state directories, created empty and left behind on uninstall.
+      The service account is granted what it needs on each: it only reads
+      definitions, and writes the database, the per-indexer overrides and
+      the log.
+    -->
+    <ComponentGroup Id="State">
+      <Component Id="DataFolder" Directory="DATAFOLDER" Permanent="yes"
+                 Guid="1F5E7A30-6C84-4B92-9E11-8D0A3C5F72B6">
+        <CreateFolder>
+          <util:PermissionEx User="LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
+        </CreateFolder>
+      </Component>
+      <Component Id="DefsFolder" Directory="DEFSFOLDER" Permanent="yes"
+                 Guid="2A6F8B41-7D95-4CA3-8F22-9E1B4D6A83C7">
+        <CreateFolder>
+          <util:PermissionEx User="LocalService" GenericRead="yes" GenericExecute="yes" />
+        </CreateFolder>
+      </Component>
+      <Component Id="CfgFolder" Directory="CFGFOLDER" Permanent="yes"
+                 Guid="3B709C52-8EA6-4DB4-9033-AF2C5E7B94D8">
+        <CreateFolder>
+          <util:PermissionEx User="LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
+        </CreateFolder>
+      </Component>
+      <Component Id="LogsFolder" Directory="LOGSFOLDER" Permanent="yes"
+                 Guid="4C81AD63-9FB7-4EC5-A144-B03D6F8CA5E9">
+        <CreateFolder>
+          <util:PermissionEx User="LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
+        </CreateFolder>
+      </Component>
+    </ComponentGroup>
+
+    <!--
+      Off unless asked for: opening a port is a decision about the
+      network the machine is on, not something an installer should assume.
+    -->
+    <ComponentGroup Id="Firewall" Directory="INSTALLFOLDER">
+      <Component Id="FirewallRule" Guid="5D92BE74-A0C8-4FD6-B255-C14E709DB6FA"
+                 Condition="ADDFIREWALLRULE=&quot;1&quot;">
+        <!-- A firewall exception cannot be a keypath, so the component
+             records the port it opened and uses that. It is also what
+             tells an upgrade that a rule was asked for.
+
+             The key goes with the value: removing a value leaves the
+             key it was under, and this key holds nothing else. -->
+        <RegistryKey Root="HKLM" Key="SOFTWARE\Jacklet\Installer"
+                     ForceDeleteOnUninstall="yes">
+          <RegistryValue Name="FirewallRule" Type="string"
+                         Value="[JACKLETPORT]" KeyPath="yes" />
+        </RegistryKey>
+        <fw:FirewallException Id="JackletPort"
+                              Name="Jacklet"
+                              Description="Jacklet Torznab indexer proxy"
+                              Port="[JACKLETPORT]"
+                              Protocol="tcp"
+                              Scope="localSubnet" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="Main" Title="Jacklet" Level="1">
+      <ComponentGroupRef Id="Program" />
+      <ComponentGroupRef Id="Docs" />
+      <ComponentGroupRef Id="ProductState" />
+      <ComponentGroupRef Id="State" />
+      <ComponentGroupRef Id="Firewall" />
+    </Feature>
+
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <UIRef Id="JackletConfigUI" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.AssetDir)\LICENSE.rtf" />
+    <WixVariable Id="WixUIBannerBmp" Value="$(var.AssetDir)\banner.bmp" />
+    <WixVariable Id="WixUIDialogBmp" Value="$(var.AssetDir)\dialog.bmp" />
+  </Package>
+</Wix>

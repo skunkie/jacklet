@@ -1,0 +1,95 @@
+{{template "head" .Indexer.Name}}
+{{template "nav" .CSRFToken}}
+
+<p class="muted" style="margin-top:-12px"><a href="/admin">&larr; Dashboard</a></p>
+<h1 style="font-size:22px;margin:0 0 2px">{{.Indexer.Name}}</h1>
+<p class="muted" style="margin:0 0 20px">
+  <code>{{.Indexer.ID}}</code>
+  &middot; Torznab: <code class="break">/api/v2.0/indexers/{{.Indexer.ID}}/results/torznab</code>
+</p>
+
+{{if .Message}}<div class="note good">{{.Message}}</div>{{end}}
+{{if .Problem}}<div class="note bad">{{.Problem}}</div>{{end}}
+
+<div class="card">
+  <h2>Status</h2>
+  <div class="row" style="gap:32px">
+    <div><div class="muted">State</div>
+      {{if eq .Indexer.State "ok"}}<span class="pill ok">ok</span>
+      {{else if eq .Indexer.State "backoff"}}<span class="pill bad">backoff</span>
+      {{else if eq .Indexer.State "failing"}}<span class="pill warn">failing</span>
+      {{else}}<span class="pill idle">idle</span>{{end}}
+    </div>
+    <div><div class="muted">Stored</div><strong>{{.Indexer.Torrents}}</strong></div>
+    <div><div class="muted">Consecutive failures</div><strong>{{.Indexer.Failures}}</strong></div>
+    {{if .Indexer.RequiresLogin}}
+    <div><div class="muted">Session</div>
+      {{if .Indexer.Authenticated}}<span class="pill ok">signed in</span>{{else}}<span class="pill warn">not signed in</span>{{end}}
+    </div>
+    {{end}}
+  </div>
+</div>
+
+<div class="card">
+  <h2>Settings</h2>
+  {{if not .Settings}}
+    <p class="muted">This definition declares no settings.</p>
+  {{else}}
+  <form method="post" action="/admin/indexers/{{.Indexer.ID}}/settings">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    {{range .Settings}}
+      <div class="field">
+        <label for="f-{{.Name}}">{{.Label}}</label>
+        {{if .Options}}
+          <select id="f-{{.Name}}" name="{{.Name}}">
+            {{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+          </select>
+        {{else if eq .Type "checkbox"}}
+          <input type="checkbox" id="f-{{.Name}}" name="{{.Name}}"{{if .Value}} checked{{end}}>
+        {{else if .Secret}}
+          <input type="password" id="f-{{.Name}}" name="{{.Name}}" value="{{.Value}}" autocomplete="new-password">
+          <div class="muted">Stored securely and never shown. Leave as-is to keep the current value; clear it to remove.</div>
+        {{else}}
+          <input type="text" id="f-{{.Name}}" name="{{.Name}}" value="{{.Value}}">
+        {{end}}
+      </div>
+    {{end}}
+    <button type="submit">Save settings</button>
+    {{if .ConfigDir}}<span class="muted" style="margin-left:10px">Written to <code>{{.ConfigDir}}/{{.Indexer.ID}}.yml</code></span>{{end}}
+  </form>
+  {{end}}
+</div>
+
+<div class="card">
+  <h2>Test</h2>
+  <p class="muted" style="margin-top:-6px">Runs a live search against the tracker and shows what the definition parsed.</p>
+  <form method="post" action="/admin/indexers/{{.Indexer.ID}}/test" class="row">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <div class="grow">
+      <label for="query">Query <span class="muted">(optional)</span></label>
+      <input type="text" id="query" name="query" placeholder="leave empty for latest releases">
+    </div>
+    <button type="submit">Run test</button>
+  </form>
+
+  {{if .TestResults}}
+  <div class="scroll" tabindex="0" role="region" aria-label="Test results">
+  <table style="margin-top:16px">
+    <thead><tr><th>Title</th><th>Torrent</th><th>Magnet</th><th class="num">Seeders</th><th class="num">Size</th><th class="num">Category</th></tr></thead>
+    <tbody>
+    {{range .TestResults}}
+      <tr>
+        <td>{{.Title}}</td>
+        <td>{{template "torrentLink" .}}</td>
+        <td>{{template "magnetLink" .}}</td>
+        <td class="num">{{.Seeders}}</td>
+        <td class="num">{{bytes .Size}}</td>
+        <td class="num">{{.Category}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{end}}
+</div>
+{{template "foot"}}

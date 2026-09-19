@@ -1,0 +1,59 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# A starting point for running Jacklet under Docker Compose. Copy it next
+# to your definitions and edit; nothing here is read by the build.
+#
+# Settings are documented in docs/configuration.md, and every one of them
+# is a JACKLET_* variable, since a compose file is a shared namespace where
+# a bare API_KEY or DB_PATH is liable to be another service's.
+
+services:
+  jacklet:
+    image: ghcr.io/torrplay/jacklet:latest
+    restart: unless-stopped
+    ports:
+      - "9117:9117"
+    environment:
+      # Without an API key every indexer endpoint is open to anyone who can
+      # reach the port, so this fails the "up" rather than defaulting to an
+      # unauthenticated server. Generate one with `openssl rand -hex 16`
+      # and put it in a .env file beside this one, or in your shell.
+      JACKLET_API_KEY: ${JACKLET_API_KEY:?set JACKLET_API_KEY, e.g. in a .env file beside this compose file}
+
+      # Set this when Jacklet sits behind a TLS-terminating reverse proxy:
+      # generated links otherwise point at the origin the request arrived on.
+      #JACKLET_BASE_URL: https://jacklet.example.com
+
+      # Advertised in the Torznab caps and feed, which some clients show to
+      # the end user. Unset advertises no address at all.
+      #JACKLET_CONTACT_EMAIL: ops@example.org
+
+      # Enables /admin. Prefer the hash, from `jacklet hash-password`, so
+      # the password itself is not sitting in this file.
+      #JACKLET_ADMIN_PASSWORD_HASH: pbkdf2-sha256$...
+
+      # For trackers behind an anti-bot challenge; see docs/definitions.md
+      # for what changes when it is set.
+      #JACKLET_FLARESOLVERR_URL: http://flaresolverr:8191
+
+      # The image already points DEFINITIONS_DIR, CONFIG_DIR and DB_PATH at
+      # the paths mounted below, so they need no entry here.
+    volumes:
+      # Definitions are yours: Jacklet ships none, and /app/definitions is
+      # empty in the image. Read-only, since Jacklet only reads them, and a
+      # bind mount so editing a file on the host takes effect on the next
+      # request -- no restart.
+      - ./definitions:/app/definitions:ro
+
+      # Per-indexer overrides, including tracker credentials in plaintext,
+      # and the scraped-results database. Both live on volumes so that
+      # pulling a new image does not discard them with the old container's
+      # layer.
+      - jacklet-config:/config
+      - jacklet-data:/data
+
+volumes:
+  jacklet-config:
+  jacklet-data:
