@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 TorrPlay
+
+SPDX-License-Identifier: MIT
+
+The mark beside the product name, for a page header or a README.
+
+The name is set in live text rather than outlines, so it stays selectable
+and legible at any size. That makes this the one asset a rasterizer
+without the font would render differently, which is why nothing in the
+build derives an icon or an installer bitmap from it. The mark itself is
+the one in logo.svg, which is where its geometry is explained.
+
+It sits on the page's own background rather than a plate of its own, so
+ink on ink would disappear wherever that background is dark. The style
+below inverts it there, and the rules select by position so the paths stay
+character-for-character the master's, which is what lets them be compared
+against it; a class attribute here would end that.
+
+The name is a mid grey that clears its contrast on a white page and on a
+dark one alike, and no rule repaints it: a preference is not the colour
+behind the image, and a reader who keeps a light page while asking for
+dark elsewhere would be shown ink on ink or paper on paper. The badge can
+take that risk where the name cannot, since either way round one of its
+two fills stays against the page.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 64" width="260" height="64" role="img" aria-label="Jacklet">
+  <style>
+    @media (prefers-color-scheme: dark) {
+      path:nth-of-type(1) { fill: #F8FAFC; }
+      path:nth-of-type(2) { fill: #1b1b1b; }
+    }
+  </style>
+  <path d="M14 0H50A14 14 0 0 1 64 14V50A14 14 0 0 1 50 64H14A14 14 0 0 1 0 50V14A14 14 0 0 1 14 0Z" fill="#1b1b1b"/>
+  <path fill="#F8FAFC" d="M16 33A16 16 0 0 0 48 33V15H40V33A8 8 0 0 1 24 33V21H16Z"/>
+  <text x="80" y="43" font-family="Segoe UI, Inter, Helvetica Neue, Arial, sans-serif"
+        font-size="34" font-weight="600" fill="#6e7781">Jacklet</text>
+</svg>
