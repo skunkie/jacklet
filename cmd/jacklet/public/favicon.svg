@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 TorrPlay
+
+SPDX-License-Identifier: MIT
+
+The Jacklet mark: a horseshoe magnet, which is the shape a torrent is
+addressed with, drawn with its right arm run long.
+
+The two readings the outline offers do not both survive every size. The
+arms differ by six units of sixty-four and are the same width, so a
+16-pixel frame rounds that difference away and the icon reads as a plain
+horseshoe; the long arm tells only at the sizes a page gives it, where the
+same outline also traces the product's initial. The magnet is what the
+mark has to carry at every size, and the initial is a reading the larger
+renderings offer rather than one it depends on.
+
+The mark is monochrome: the badge is ink and the hook is knocked out of
+it in a light fill rather than left transparent, so the mark carries its
+own contrast and reads the same on a light page, a dark page and a desktop
+wallpaper. The admin panel draws the same outline inline in its own text
+colour, with no badge, since there it sits beside the wordmark rather than
+among other icons.
+
+Four constraints shape how it is drawn, all of them about surviving the
+rasterizer that derives the Windows icon and the installer bitmaps:
+
+  - Flat fills only, on a square viewBox. No gradient, no filter, no
+    embedded raster, and no stroke: a stroke width does not always scale
+    with the drawing, which turns the hook into a blot at icon sizes. The
+    arms are an outlined path, which scales by its coordinates alone.
+  - No transform attribute. A rasterizer that ignores one drops the shape
+    it was placed by, leaving an empty badge, so every coordinate here is
+    already final.
+  - The badge is an explicit path rather than a rect with a corner
+    radius, because not every rasterizer honors the radius, and a mark
+    whose corners silently square off is worse than one that is harder
+    to read in source.
+  - The smallest frame it has to survive is 16x16. That sizes the arms:
+    the hook stays solid there, and its opening still reads as an opening
+    rather than a notch.
+
+Geometry, for editing: the badge is 64x64 with a 14 corner radius; the
+hook is centred on (32,33) with radii 16 and 8, the long arm running up
+to y=15 and the short one to y=21.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Jacklet">
+  <path d="M14 0H50A14 14 0 0 1 64 14V50A14 14 0 0 1 50 64H14A14 14 0 0 1 0 50V14A14 14 0 0 1 14 0Z" fill="#1b1b1b"/>
+  <path fill="#F8FAFC" d="M16 33A16 16 0 0 0 48 33V15H40V33A8 8 0 0 1 24 33V21H16Z"/>
+</svg>
