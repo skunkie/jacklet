@@ -1,0 +1,118 @@
+// SPDX-FileCopyrightText: 2026 TorrPlay
+//
+// SPDX-License-Identifier: MIT
+
+package scraper
+
+import (
+	"errors"
+	"log/slog"
+	"net/url"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+)
+
+// TestScraper_RecoveredScrape covers the containment itself: extraction
+// runs over responses Jacklet does not control, and the aggregate indexer
+// scrapes in goroutines net/http's recovery does not reach, so a panic has
+// to come back as this tracker's error rather than end the process.
+func TestScraper_RecoveredScrape(t *testing.T) {
+	store := &fakeStore{}
+
+	s := NewWithOptions(NewConfigStore(""), "", slog.New(slog.DiscardHandler), Options{Sink: store})
+	def := &Tracker{ID: "example", Name: "Example"}
+
+	panicking := func() (err error) {
+		defer func() { err = s.recoveredScrape(recover(), def, err) }()
+		panic("boom")
+	}
+	require.ErrorContains(t, panicking(), "panic: boom")
+
+	// Nothing recovered leaves the scrape's own outcome alone, in either
+	// direction.
+	failing := errors.New("unreachable")
+	require.ErrorIs(t, s.recoveredScrape(nil, def, failing), failing)
+	require.NoError(t, s.recoveredScrape(nil, def, nil))
+}
+
+// TestScraperRecordsAPanickingScrapeAsAFailure runs the real
+// Scrape over a panic, so the defer pair that matters is the one in
+// production rather than a replica of it.
+//
+// The seam is a Scraper built with no ConfigStore: Resolve dereferences
+// the nil store, and it does so after both defers are registered, which is
+// exactly where a panic has to leave the tracker's bookkeeping intact.
+// The assertion on "panic:" keeps the test honest — an ordinary scrape
+// failure would also count a failure, and would pass an assertion that
+// only looked at the count.
+func TestScraperRecordsAPanickingScrapeAsAFailure(t *testing.T) {
+	store := &fakeStore{}
+
+	s := NewWithOptions(nil, "", slog.New(slog.DiscardHandler), Options{Sink: store})
+	tracker := loadTestTracker(t, t.TempDir(), "panic-tracker", `
+id: panic-tracker
+name: panic-tracker
+links:
+  - https://tracker.invalid/
+search:
+  paths:
+    - path: /search
+  rows:
+    selector: ".row"
+  fields:
+    title:
+      selector: "a"
+`)
+
+	err := s.scrapeIndexer(t.Context(), tracker, SearchParams{})
+	require.ErrorContains(t, err, "panic:")
+
+	// finishScrape ran with the recovered error in place, so the tracker
+	// backs off instead of being filed as a success and retried at full
+	// rate on the next search.
+	status := s.Status(TrackerID(tracker))
+	require.Equal(t, 1, status.Failures)
+	require.True(t, status.NextAllowed.After(time.Now()), "a panicking scrape must back off")
+
+	// The flight was settled too, so a concurrent search of the same query
+	// was released with that failure rather than left waiting out the
+	// request's scrape timeout for a scrape that is never coming back.
+	plan := s.planScrape(TrackerID(tracker), SearchParams{}.cacheKey())
+	require.False(t, plan.isFollower, "the panicking flight must not be left in flight")
+}
+
+// panickingConfig is a ConfigSource that panics with a request error naming
+// a passkey, standing in for any code under Scrape that panics with one.
+type panickingConfig struct{}
+
+func (panickingConfig) Overrides(string) (map[string]any, error) {
+	panic(&url.Error{Err: errors.New("boom"), Op: "Get", URL: "https://tracker.test/search.php?passkey=SAMPLEKEY"})
+}
+
+// A panic is recovered into the scrape's error after the defers that run
+// before it, so the address redaction has to run after the recovery to see
+// it, and before finishScrape records it.
+func TestScraperRedactsTheQueryFromARecoveredPanic(t *testing.T) {
+	s := New(panickingConfig{}, "", slog.New(slog.DiscardHandler))
+	tracker := loadTestTracker(t, t.TempDir(), "panic-tracker", `
+id: panic-tracker
+name: panic-tracker
+links:
+  - https://tracker.invalid/
+search:
+  paths:
+    - path: /search
+  rows:
+    selector: ".row"
+  fields:
+    title:
+      selector: "a"
+`)
+
+	_, err := s.Scrape(t.Context(), tracker, SearchParams{})
+	require.ErrorContains(t, err, "panic:")
+	require.NotContains(t, err.Error(), "SAMPLEKEY", "the tracker's passkey reached the error")
+	require.Contains(t, err.Error(), "query redacted")
+}
