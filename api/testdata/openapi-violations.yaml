@@ -1,0 +1,71 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# A document that breaks each of the project's own rules in .vacuum.yml
+# once, and holds two descriptions the description rule must leave alone:
+# an example's data, and a schema property that is itself named
+# description. A description violation names where it sits, such as "Item
+# description without a period", and scripts/check-vacuum-rules.sh
+# expects each by that text; the other rules are expected by their id.
+
+openapi: 3.2.1
+
+info:
+  title: Violations
+  description: Info description without a period
+  version: "1.0"
+
+tags:
+  - name: lowercase tag
+    description: Tag description without a period
+
+paths:
+  /example:
+    get:
+      tags: [lowercase tag]
+      summary: Summary with a period.
+      description: Operation description without a period
+      operationId: snake_case_id
+      parameters:
+        - $ref: "#/components/parameters/Example"
+      responses:
+        "200":
+          description: Response description without a period
+          content:
+            application/json:
+              schema:
+                type: array
+                description: Inline schema description without a period
+                examples:
+                  - - description: Example data without a period
+                items:
+                  $ref: "#/components/schemas/Example"
+
+components:
+  parameters:
+    Example:
+      name: example
+      in: query
+      description: Parameter description without a period
+      schema:
+        type: string
+
+  schemas:
+    Example:
+      type: object
+      description: Schema description without a period
+      properties:
+        description:
+          type: string
+          description: Property description without a period
+        Empty:
+          type: string
+          description: ""
+        Items:
+          type: array
+          description: An array of names.
+          items:
+            type: string
+            description: Item description without a period
+      required: [description, Empty, Items]

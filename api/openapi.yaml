@@ -1,0 +1,1444 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+openapi: 3.2.1
+
+info:
+  title: Jacklet
+  description: >
+    A lightweight Torznab/Newznab-compatible indexer proxy. Each configured
+    tracker definition is exposed as its own Torznab endpoint, matching how
+    Jackett presents indexers to Sonarr/Radarr/Prowlarr.
+
+
+    The reserved indexer id `all` is the aggregate endpoint: it queries
+    every configured definition at once and returns one merged feed, for a
+    client that would rather add a single endpoint than one per indexer.
+    It accepts the same parameters as any other indexer, advertises the
+    union of every definition's categories and search modes, and keeps
+    each release's download link pointed at the indexer it came from.
+
+
+    Torznab itself is an XML/RSS-based protocol with no JSON variant; the
+    `/api/v2.0/indexers/{id}/results` endpoint is Jackett's own non-standard
+    addition to it, running the identical search but responding with JSON.
+
+
+    A failure on the Torznab XML endpoint is reported as a Torznab error
+    document — `<error code="…" description="…"/>` — carrying the code
+    Jackett sends in the same situation: 100 for a rejected `apikey`, 201
+    for an unknown indexer, 202 for an unknown `t`, 203 for an operation
+    the addressed indexer does not offer, and 900 for anything else. The
+    document travels with a real status code, as it does in Jackett: 401
+    for a rejected key and 404 for an unknown indexer, matching it. The
+    one difference is a search against an unreachable tracker, answered
+    here with 502 where Jackett sends 400, because the status describes
+    the failure and the client branches on the error code either way. The
+    JSON endpoints answer with their own `{"error": "…"}` shape instead,
+    and a download failure with a plain-text message.
+
+
+    Every path here is the one Jackett serves the same thing from, so a
+    client already pointed at a Jackett instance reaches Jacklet without
+    being reconfigured. Torznab specifies query parameters and a response
+    format, not a URL layout, and Jackett's layout is what clients are set
+    up with. Two endpoints have no Jackett counterpart and say so in their
+    own description.
+  contact:
+    name: Jacklet
+    url: https://github.com/torrplay/jacklet
+  license:
+    name: MIT
+    identifier: MIT
+  version: dev
+
+servers:
+  - url: /
+
+security:
+  - apiKey: []
+  - {}
+
+tags:
+  - name: Search
+    description: >
+      The endpoints a client searches through: the Torznab feed Sonarr,
+      Radarr and Prowlarr are pointed at, and the same search answered as
+      JSON.
+  - name: Indexers
+    description: The indexers this instance serves, as Jackett lists them.
+  - name: Downloads
+    description: >
+      The torrent files behind search results, fetched with Jacklet's own
+      tracker session.
+  - name: Health
+    description: Whether this instance can answer, for a container orchestrator.
+
+paths:
+  /api/v2.0/indexers:
+    get:
+      tags: [Indexers]
+      summary: Configured indexers, in Jackett's shape
+      description: >
+        The configured indexer directory, in the JSON Jackett returns from
+        this same address, so a script or dashboard written against Jackett
+        can enumerate Jacklet's indexers unmodified. The keys are Jackett's
+        own, copied as it serializes them rather than tidied to match the
+        rest of this API.
+
+
+        The aggregate indexer `all` is deliberately absent: it is an
+        endpoint over the listed definitions rather than another
+        definition alongside them, and a client walking this list to add
+        every indexer would otherwise add all of them twice. Definitions
+        that failed to parse are absent too, since Jackett's array has
+        nowhere to report them; they are logged as they are read, and
+        listed in the admin panel when one is configured.
+      operationId: listIndexers
+      parameters:
+        - name: configured
+          in: query
+          description: >
+            Accepted for compatibility and ignored. Jackett filters its
+            list with it, because an indexer there is configured in a
+            separate step; a definition here is present in `definitions/`
+            or it is not, so every indexer listed is already configured.
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: The indexer directory.
+          content:
+            application/json:
+              schema:
+                type: array
+                examples:
+                  - - alternativesitelinks:
+                        - https://mirror.tracker.example/
+                      caps:
+                        - ID: "2040"
+                          Name: Movies/HD
+                        - ID: "100001"
+                          Name: Example Films
+                      configured: true
+                      description: An example private tracker.
+                      id: example-tracker
+                      language: en-US
+                      last_error: ""
+                      name: Example Tracker
+                      potatoenabled: false
+                      site_link: https://tracker.example/
+                      tags: []
+                      type: private
+                items:
+                  $ref: "#/components/schemas/JackettIndexer"
+        "401":
+          $ref: "#/components/responses/UnauthorizedJson"
+        "500":
+          $ref: "#/components/responses/InternalServerErrorJson"
+
+  /api/v2.0/indexers/{id}/download/{row}:
+    get:
+      tags: [Downloads]
+      summary: The torrent file for one stored result
+      description: >
+        Fetches a stored result's torrent file from the tracker using
+        Jacklet's own authenticated session, and streams it back. A Torznab
+        client has no account on a private tracker, so handing it the
+        tracker's link gives it a 403 or a login page saved as a `.torrent`;
+        Jackett proxies the fetch for the same reason.
+
+
+        The path carries the store's row id rather than a URL, so the
+        endpoint resolves what to fetch from the database and cannot be
+        pointed at an arbitrary address. Search responses already contain
+        the right link — there is no need to build one by hand.
+
+
+        A result whose link is a magnet, or whose tracker's download leads
+        to one, redirects to it instead, since a client resolves a magnet
+        itself.
+      operationId: downloadTorrent
+      parameters:
+        - $ref: "#/components/parameters/IndexerId"
+        - name: row
+          in: path
+          description: >
+            The stored result's row id, as carried by its search result
+            link.
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: >
+            The torrent file, served as `application/x-bittorrent` whatever
+            type the tracker labeled it with, and encoded again with its
+            dictionary keys sorted, as Jackett serves it.
+          content:
+            application/x-bittorrent:
+              schema:
+                type: string
+                format: binary
+        "302":
+          description: >
+            The result's download is a magnet, the tracker answered with one
+            as its body, or the torrent file could not be fetched and the
+            result also carries a magnet, and the client is redirected to it.
+            The body is the short HTML link a redirect carries.
+          content:
+            text/html:
+              schema:
+                type: string
+              examples:
+                magnet:
+                  summary: A redirect to the result's magnet
+                  value: <a href="magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567">Found</a>.
+        "400":
+          description: >
+            The row id was not a number, or the stored link does not belong
+            to this tracker.
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                badRow:
+                  summary: A row id that is not a number
+                  value: Invalid row id
+                foreignLink:
+                  summary: A stored link off the tracker's hosts
+                  value: >-
+                    Refused to download from example-tracker: the link leaves
+                    the tracker
+        "401":
+          $ref: "#/components/responses/UnauthorizedPlain"
+        "404":
+          description: >
+            No such indexer, no such stored result for it, or the result
+            carries no download link, or only a magnet that cannot be
+            redirected to.
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                noResult:
+                  summary: No such stored result
+                  value: No such result
+                noLink:
+                  summary: A result with nothing to download
+                  value: This result has no download link
+        "500":
+          $ref: "#/components/responses/InternalServerErrorPlain"
+        "502":
+          description: >
+            The tracker refused the request, could not be reached, or
+            answered with something other than a torrent file: a web page,
+            which usually means the login session lapsed, an error in plain
+            text or JSON, nothing at all, or a torrent file that does not
+            parse, is cut short or is larger than the download cap. A magnet
+            the tracker supplies that is cut off, too long to send as a
+            redirect, or names no exact topic is answered the same way.
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                failed:
+                  summary: The tracker refused or failed the download
+                  value: Failed to download from example-tracker
+
+  /api/v2.0/indexers/{id}/results:
+    get:
+      tags: [Search]
+      summary: Search results for one indexer, as JSON
+      description: >
+        Runs the same scrape-then-search pipeline as
+        `/api/v2.0/indexers/{id}/results/torznab/api?t=search`, reading the
+        query as described below, and responds with JSON instead of Torznab
+        XML. Not part of the Torznab specification — this is Jackett's own
+        address, Jackett's own addition to it, and Jackett's own response
+        shape, reproduced key for key so a client written against Jackett
+        reads it unmodified. The reserved id `all` queries every configured
+        indexer, and each result names the indexer it came from in
+        `TrackerId`. Unlike the XML feed, an indexer that could not be
+        reached does not fail the request: it is reported against its own
+        entry in `Indexers` and the indexers that answered are still
+        returned. The query is read as Jackett's interactive search reads
+        it: the search is a plain one, an episode at the end of the query
+        (`S01E02`, `S01`, `E02` or `S01 E02`) is searched as that season and
+        episode, and a query that is an IMDb id (`tt0123456`) is an IMDb
+        lookup, sent only to the indexers whose movie search takes an IMDb
+        id.
+      operationId: searchIndexer
+      parameters:
+        - $ref: "#/components/parameters/IndexerId"
+        - $ref: "#/components/parameters/Query"
+        - $ref: "#/components/parameters/JackettQuery"
+        - $ref: "#/components/parameters/Category"
+        - $ref: "#/components/parameters/JackettCategory"
+        - $ref: "#/components/parameters/Season"
+        - $ref: "#/components/parameters/Episode"
+        - $ref: "#/components/parameters/ImdbId"
+        - $ref: "#/components/parameters/TvdbId"
+        - $ref: "#/components/parameters/TmdbId"
+        - $ref: "#/components/parameters/TvMazeId"
+        - $ref: "#/components/parameters/TraktId"
+        - $ref: "#/components/parameters/TvRageId"
+        - $ref: "#/components/parameters/JackettRageId"
+        - $ref: "#/components/parameters/DoubanId"
+        - $ref: "#/components/parameters/Extended"
+        - $ref: "#/components/parameters/Year"
+        - $ref: "#/components/parameters/Genre"
+        - $ref: "#/components/parameters/Artist"
+        - $ref: "#/components/parameters/Album"
+        - $ref: "#/components/parameters/Track"
+        - $ref: "#/components/parameters/Label"
+        - $ref: "#/components/parameters/Author"
+        - $ref: "#/components/parameters/Publisher"
+        - $ref: "#/components/parameters/Title"
+        - $ref: "#/components/parameters/Tracker"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: >
+            The matching releases, and how each indexer the request covered
+            fared.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResults"
+        "401":
+          $ref: "#/components/responses/UnauthorizedJson"
+        "404":
+          $ref: "#/components/responses/IndexerNotFoundJson"
+        "500":
+          $ref: "#/components/responses/InternalServerErrorJson"
+        "503":
+          description: >
+            No indexer definition loaded at all, so there is nothing
+            configured to search. Answered for the aggregate id `all` and
+            for a filter expression alike, since the install is equally
+            unconfigured whichever one was addressed. Jackett answers that
+            case with an empty 200; this reports it instead, so an empty
+            definitions directory is visible rather than showing as searches
+            that always succeed and never match. A filter that matched none
+            of the definitions it did load is not this case: it covers
+            nothing, which is an empty 200 with empty `Results` and
+            `Indexers`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                unconfigured:
+                  summary: No definitions loaded
+                  value:
+                    error: No indexer definitions are configured
+
+  /api/v2.0/indexers/{id}/results/torznab/api:
+    get:
+      tags: [Search]
+      summary: Torznab/Newznab API for one indexer
+      description: >
+        The standard Torznab XML endpoint for a single indexer, matched by
+        its definition's `id` field, or for every configured indexer at once
+        under the id `all`. The trailing `api` is Jackett's action segment:
+        its value is ignored, and the path also answers without it and with
+        a trailing slash, which is the form Jackett's own UI hands out.
+        Behavior is selected by the `t` query parameter: `caps` returns the
+        indexer's capabilities; `indexers` returns the indexers behind the
+        aggregate, each with its own capabilities, and is available on the
+        id `all` alone; `search`, `tvsearch` (or `tv-search`), `movie` (or
+        `moviesearch` / `movie-search`), `music` (or `musicsearch` /
+        `music-search` and the `audio` spellings) and `book` (or
+        `booksearch` / `book-search`) trigger a live re-scrape of the
+        indexer (bounded by a timeout) followed by a search of the results
+        now stored for it. A search goes only to the trackers whose
+        capabilities can answer it.
+
+
+        A search request within a few seconds of the previous one for the
+        same indexer is rate-limited: it skips the live re-scrape and
+        returns whatever is already stored, rather than hitting the tracker
+        again.
+
+
+        For the aggregate id `all`, the indexers able to answer the search
+        are scraped concurrently and answered from a single query across
+        all of them, so the sort order, the page and the total are global.
+        One unreachable indexer does not fail the request; a 502 is
+        returned only when every indexer failed and nothing is stored for
+        any of them.
+      operationId: queryTorznab
+      parameters:
+        - $ref: "#/components/parameters/IndexerId"
+        - name: t
+          in: query
+          description: Which Torznab operation to perform.
+          required: true
+          schema:
+            type: string
+            enum:
+              - caps
+              - indexers
+              - search
+              - tvsearch
+              - tv-search
+              - movie
+              - moviesearch
+              - movie-search
+              - music
+              - musicsearch
+              - music-search
+              - audio
+              - audiosearch
+              - audio-search
+              - book
+              - booksearch
+              - book-search
+        - name: configured
+          in: query
+          description: >
+            Only with `t=indexers`: `true` lists the configured indexers and
+            `false` the unconfigured ones, anything else lists them all.
+            Every definition Jacklet loads is configured, so `false` answers
+            with an empty list. Note this is not the same parameter as the
+            one on `/api/v2.0/indexers`, which Jackett reads as a boolean
+            where only `true` filters; the two differ in Jackett and are
+            reproduced as they are.
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Query"
+        - $ref: "#/components/parameters/Category"
+        - $ref: "#/components/parameters/Season"
+        - $ref: "#/components/parameters/Episode"
+        - $ref: "#/components/parameters/ImdbId"
+        - $ref: "#/components/parameters/TvdbId"
+        - $ref: "#/components/parameters/TmdbId"
+        - $ref: "#/components/parameters/TvMazeId"
+        - $ref: "#/components/parameters/TraktId"
+        - $ref: "#/components/parameters/TvRageId"
+        - $ref: "#/components/parameters/DoubanId"
+        - $ref: "#/components/parameters/Extended"
+        - $ref: "#/components/parameters/Year"
+        - $ref: "#/components/parameters/Genre"
+        - $ref: "#/components/parameters/Artist"
+        - $ref: "#/components/parameters/Album"
+        - $ref: "#/components/parameters/Track"
+        - $ref: "#/components/parameters/Label"
+        - $ref: "#/components/parameters/Author"
+        - $ref: "#/components/parameters/Publisher"
+        - $ref: "#/components/parameters/Title"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: >
+            A Torznab caps document (for `t=caps`) or a Torznab/RSS feed of
+            matching torrents (for a search type).
+          content:
+            application/xml:
+              schema:
+                type: string
+        "400":
+          description: >
+            The request cannot be answered as asked, and the error document
+            carries a code for each case: 202 for a missing or unrecognized
+            `t`, 203 for `t=indexers` asked of an indexer other than the
+            aggregate, and 201 for a search no tracker the indexer covers can
+            answer, such as a mode its caps do not advertise or an IMDb id
+            none takes. A search only some of them can answer goes to those.
+          content:
+            application/xml:
+              schema:
+                $ref: "#/components/schemas/TorznabError"
+              examples:
+                unknownMode:
+                  summary: A missing or unrecognized t
+                  value:
+                    code: 202
+                    description: Invalid 't' parameter
+                notAggregate:
+                  summary: t=indexers asked of a single indexer
+                  value:
+                    code: 203
+                    description: >-
+                      Function Not Available: this isn't a meta indexer
+                unsupported:
+                  summary: A search no tracker can answer
+                  value:
+                    code: 201
+                    description: >-
+                      example-tracker does not support the requested query.
+                      Please check the capabilities (t=caps) and make sure the
+                      search mode and parameters are supported.
+        "401":
+          $ref: "#/components/responses/UnauthorizedTorznab"
+        "404":
+          $ref: "#/components/responses/IndexerNotFoundTorznab"
+        "500":
+          $ref: "#/components/responses/InternalServerErrorTorznab"
+        "502":
+          description: >
+            The indexer's site was unreachable and nothing was already
+            stored for it. When the site is unreachable but stored results
+            exist, those are served with a 200 instead. For the aggregate
+            id `all` or a filter expression, this means every indexer it
+            covers failed.
+          content:
+            application/xml:
+              schema:
+                $ref: "#/components/schemas/TorznabError"
+              examples:
+                unreachable:
+                  summary: The tracker could not be reached
+                  value:
+                    code: 900
+                    description: Indexer example-tracker is unreachable
+        "503":
+          description: >
+            No indexer definition loaded at all, so there is nothing
+            configured to search. Answered for the aggregate id `all` and
+            for a filter expression alike, since the install is equally
+            unconfigured whichever one was addressed. A filter that matched
+            none of the definitions it did load is not this case: it covers
+            nothing, which is an empty feed.
+          content:
+            application/xml:
+              schema:
+                $ref: "#/components/schemas/TorznabError"
+              examples:
+                unconfigured:
+                  summary: No definitions loaded
+                  value:
+                    code: 900
+                    description: No indexer definitions are configured
+
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Liveness/readiness probe
+      description: Returns 200 if the database is reachable, 503 otherwise.
+      operationId: checkHealth
+      responses:
+        "200":
+          description: The database is reachable.
+        "503":
+          description: The database is unreachable.
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                unreachable:
+                  summary: The database did not answer
+                  value: database unreachable
+      security: []
+
+components:
+  parameters:
+    Album:
+      name: album
+      in: query
+      description: Album name, for a music search.
+      schema:
+        type: string
+    Artist:
+      name: artist
+      in: query
+      description: Artist name, for a music search.
+      schema:
+        type: string
+    Author:
+      name: author
+      in: query
+      description: Author name, for a book search.
+      schema:
+        type: string
+    Category:
+      name: cat
+      in: query
+      description: >
+        Standard Torznab category ids to filter by. Repeat the parameter for
+        multiple categories, or give them as one comma-separated value. The
+        JSON results endpoint also accepts them as `Category` or
+        `Category[]`, which is what a client written against Jackett sends;
+        the name is matched without regard to case.
+      examples:
+        movies:
+          summary: HD and UHD movies
+          value: [2040, 2045]
+      schema:
+        type: array
+        items:
+          type: integer
+          format: int32
+    DoubanId:
+      name: doubanid
+      in: query
+      description: >
+        Douban id to search by, made available to a definition's templates
+        as `.Query.DoubanID` for a tracker that can search by it directly.
+      schema:
+        type: string
+    Episode:
+      name: ep
+      in: query
+      description: >
+        Episode number, folded into the search text as `SxxEyy` when a
+        season is set, or a daily show's `MM/dd` day, which with a year as
+        the season is folded in as the air date, `2024.03.15`.
+      schema:
+        type: string
+    Extended:
+      name: extended
+      in: query
+      description: >
+        Newznab `extended` flag, passed through to definitions that vary
+        their request on it.
+      schema:
+        type: string
+    Genre:
+      name: genre
+      in: query
+      description: Genre to search by.
+      schema:
+        type: string
+    ImdbId:
+      name: imdbid
+      in: query
+      description: >
+        IMDb id to search by, made available to a definition's templates as
+        `.Query.IMDBID` for a tracker that can search by it directly.
+      schema:
+        type: string
+    IndexerId:
+      name: id
+      in: path
+      description: >
+        A tracker definition's own `id` field, the reserved id `all` for the
+        aggregate endpoint over every configured indexer, or one of
+        Jackett's filter expressions to search the indexers it covers. A
+        definition using `all` as its id is shadowed by the aggregate: it is
+        still searched through it, but is not reachable on its own path.
+
+
+        A filter expression is a `name:value` term, or several joined by `+`
+        (all must match) and `,` (any may match), each optionally negated
+        with a leading `!` — for example `status:healthy` or
+        `!type:private+lang:en`. The names are `type` (the definition's
+        declared type), `lang` (a language prefix, so `lang:en` covers
+        `en-US`), `status` (`healthy`, `failing` or `unknown`) and `test`
+        (`passed` or `failed`). Jacklet has no separate test action, so
+        `test` reads the same state as `status`. Indexers carry no tags, so
+        `tag:` matches nothing. A colon is what marks an id as an expression
+        — no definition id contains one.
+
+
+        Health deliberately differs from Jackett's here. Jackett calls an
+        indexer healthy only inside a validity window opened by a search
+        that succeeded, so one it has not searched yet is unknown rather
+        than healthy and `status:healthy` answers a freshly started instance
+        with nothing. Health is the absence of a recorded scrape failure
+        instead, so an indexer nothing has scraped yet is healthy and every
+        configured one is reachable from the start.
+      required: true
+      examples:
+        aggregate:
+          summary: Every configured indexer
+          value: all
+        filter:
+          summary: The healthy indexers that are not private
+          value: status:healthy+!type:private
+        single:
+          summary: One indexer
+          value: example-tracker
+      schema:
+        type: string
+    JackettCategory:
+      name: Category[]
+      in: query
+      description: >
+        The categories, under the name Jackett binds at the JSON results
+        endpoint. Jackett does not read `cat` at that address, so this is
+        the spelling a client written against it sends. Matched without
+        regard to case, with or without the brackets. Accepted on the JSON
+        results endpoint only.
+      examples:
+        movies:
+          summary: HD and UHD movies
+          value: [2040, 2045]
+      schema:
+        type: array
+        items:
+          type: integer
+          format: int32
+    JackettQuery:
+      name: Query
+      in: query
+      description: >
+        The search text, under the name Jackett binds at the JSON results
+        endpoint. Jackett does not read `q` at that address, so this is the
+        spelling a client written against it sends. Matched without regard
+        to case. Accepted on the JSON results endpoint only.
+      schema:
+        type: string
+    JackettRageId:
+      name: rageid
+      in: query
+      description: >
+        The TVRage id, under the name Jackett binds at the JSON results
+        endpoint, where it does not read Torznab's `rid`. Accepted on the
+        JSON results endpoint only.
+      schema:
+        type: string
+    Label:
+      name: label
+      in: query
+      description: Record label, for a music search.
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      description: >
+        Maximum number of results to return (default 50, capped at 100 on
+        the Torznab feed). The JSON results endpoint answers unpaged, as
+        Jackett's does, so it defaults to the whole result set and its cap
+        is only there to keep a page bounded. Also passed to the indexer as
+        `.Query.Limit`, for a definition that pages on the tracker's side.
+      schema:
+        type: integer
+        format: int32
+    Offset:
+      name: offset
+      in: query
+      description: >
+        Number of matching results to skip, for paging. Also passed to the
+        indexer as `.Query.Offset`. For a definition that does not page on
+        the tracker's side, a later page is answered from what is already
+        stored rather than re-fetching the same page.
+      schema:
+        type: integer
+        format: int32
+        default: 0
+    Publisher:
+      name: publisher
+      in: query
+      description: Publisher name, for a book search.
+      schema:
+        type: string
+    Query:
+      name: q
+      in: query
+      description: >
+        Free-text search query. The JSON results endpoint also accepts it as
+        `Query`, which is the name Jackett binds there and the only spelling
+        a client written against Jackett sends — Jackett does not read `q`
+        at that address at all. The name is matched without regard to case.
+      schema:
+        type: string
+    Season:
+      name: season
+      in: query
+      description: >
+        Season number, folded into the search text as `SxxEyy` when set and
+        not zero, or a daily show's year, folded in as the air date with its
+        `MM/dd` episode.
+      schema:
+        type: string
+    Title:
+      name: title
+      in: query
+      description: Book title, for a book search.
+      schema:
+        type: string
+    TmdbId:
+      name: tmdbid
+      in: query
+      description: >
+        TMDb id to search by, made available to a definition's templates as
+        `.Query.TMDBID` for a tracker that can search by it directly.
+      schema:
+        type: string
+    Track:
+      name: track
+      in: query
+      description: Track name, for a music search.
+      schema:
+        type: string
+    Tracker:
+      name: Tracker[]
+      in: query
+      description: >
+        Indexer ids to narrow the search to, from among those the addressed
+        indexer already covers — Jackett's own parameter for re-running a
+        search over a subset without addressing each indexer separately.
+        Repeat the parameter or give the ids as one comma-separated value.
+        An id the addressed indexer does not cover is ignored. Naming none
+        of its indexers yields an empty result rather than an error, since
+        the client chose the set. Accepted on the JSON results endpoint
+        only.
+      examples:
+        subset:
+          summary: Two of the aggregate's indexers
+          value: [example-tracker, sample-tracker]
+      schema:
+        type: array
+        items:
+          type: string
+    TraktId:
+      name: traktid
+      in: query
+      description: >
+        Trakt id to search by, made available to a definition's templates as
+        `.Query.TraktID` for a tracker that can search by it directly.
+      schema:
+        type: string
+    TvMazeId:
+      name: tvmazeid
+      in: query
+      description: >
+        TVmaze id to search by, made available to a definition's templates
+        as `.Query.TVMazeID` for a tracker that can search by it directly.
+      schema:
+        type: string
+    TvRageId:
+      name: rid
+      in: query
+      description: >
+        TVRage id to search by, made available to a definition's templates
+        as `.Query.TVRageID` for a tracker that can search by it directly.
+        The JSON results endpoint also accepts it as `rageid`, which is the
+        name Jackett binds there.
+      schema:
+        type: string
+    TvdbId:
+      name: tvdbid
+      in: query
+      description: >
+        TheTVDB id to search by, made available to a definition's templates
+        as `.Query.TVDBID` for a tracker that can search by it directly.
+      schema:
+        type: string
+    Year:
+      name: year
+      in: query
+      description: Release year to search by.
+      schema:
+        type: string
+
+  responses:
+    IndexerNotFoundJson:
+      description: >
+        No definition with that id was found. The body is the JSON error shape.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            unknown:
+              summary: An id no definition has
+              value:
+                error: 'tracker not found: "unknown-tracker"'
+    IndexerNotFoundTorznab:
+      description: >
+        No definition with that id was found. The body is a Torznab error
+        document with code 201, Jackett's code for an indexer it does not
+        support.
+      content:
+        application/xml:
+          schema:
+            $ref: "#/components/schemas/TorznabError"
+          examples:
+            unknown:
+              summary: An id no definition has
+              value:
+                code: 201
+                description: 'tracker not found: "unknown-tracker"'
+    InternalServerErrorJson:
+      description: >
+        Jacklet failed on its own side, such as the definitions directory not
+        being readable or the store not answering a query. Unlike a failed
+        scrape, which falls back to stored results, there is nothing to answer
+        with. The body is the JSON error shape.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            definitions:
+              summary: The definitions could not be loaded
+              value:
+                error: Failed to load tracker definitions
+    InternalServerErrorPlain:
+      description: >
+        Jacklet failed on its own side, such as the definitions directory not
+        being readable or the store not answering a query. Unlike a failed
+        scrape, which falls back to stored results, there is nothing to answer
+        with. The body is a plain-text message.
+      content:
+        text/plain:
+          schema:
+            type: string
+          examples:
+            lookup:
+              summary: The store could not be read
+              value: Failed to look up the result
+    InternalServerErrorTorznab:
+      description: >
+        Jacklet failed on its own side, such as the definitions directory not
+        being readable or the store not answering a query. Unlike a failed
+        scrape, which falls back to stored results, there is nothing to answer
+        with. The body is a Torznab error document
+        with code 900.
+      content:
+        application/xml:
+          schema:
+            $ref: "#/components/schemas/TorznabError"
+          examples:
+            definitions:
+              summary: The definitions could not be loaded
+              value:
+                code: 900
+                description: Failed to load tracker definitions
+    UnauthorizedJson:
+      description: >
+        Missing or incorrect `apikey`. The body is the JSON error shape.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            rejected:
+              summary: A missing or wrong key
+              value:
+                error: Invalid API Key
+    UnauthorizedPlain:
+      description: >
+        Missing or incorrect `apikey`. The body is a plain-text message, since a
+        download has no document to carry a code.
+      content:
+        text/plain:
+          schema:
+            type: string
+          examples:
+            rejected:
+              summary: A missing or wrong key
+              value: Invalid API Key
+    UnauthorizedTorznab:
+      description: >
+        Missing or incorrect `apikey`. The body is a Torznab error document with
+        code 100, which a client reads to tell a rejected key from a failure
+        worth retrying.
+      content:
+        application/xml:
+          schema:
+            $ref: "#/components/schemas/TorznabError"
+          examples:
+            rejected:
+              summary: A missing or wrong key
+              value:
+                code: 100
+                description: Invalid API Key
+
+  schemas:
+    ErrorResponse:
+      type: object
+      description: The failure a JSON endpoint answers with.
+      examples:
+        - error: No indexer definitions are configured
+      properties:
+        error:
+          type: string
+          description: What failed, for a person to read.
+          examples: [No indexer definitions are configured]
+      required: [error]
+
+    JackettCapability:
+      type: object
+      description: >
+        One advertised category. Jackett capitalizes these two keys where
+        it lowercases every key of the object containing them, and writes
+        the category id as a string; both are reproduced here.
+      properties:
+        ID:
+          type: string
+          description: >
+            The Torznab category id, as a string: a standard id, or the
+            tracker's own custom category, 100000 and up.
+        Name:
+          type: string
+          description: >
+            The category's standard name, such as `Movies/HD`, or for a
+            custom category the tracker's own description of it.
+      required: [ID, Name]
+
+    JackettIndexer:
+      type: object
+      description: >
+        One entry of Jackett's own indexer directory, field for field.
+      properties:
+        alternativesitelinks:
+          type: array
+          description: The definition's remaining site links, after the first.
+          examples:
+            - - https://mirror.tracker.example/
+          items:
+            type: string
+        caps:
+          type: array
+          description: >
+            The categories this indexer advertises: its standard Torznab
+            categories, then the tracker's own custom categories.
+          items:
+            $ref: "#/components/schemas/JackettCapability"
+        configured:
+          type: boolean
+          description: >
+            Always true. A definition Jacklet can load is configured; there
+            is no separate step that turns one on.
+        description:
+          type: string
+          description: The definition's own description, which may be empty.
+        id:
+          type: string
+          description: >
+            The definition's `id` field, or its name when it declares none.
+        language:
+          type: string
+          description: The tracker's language tag, such as `en-US`.
+        last_error:
+          type: string
+          description: >
+            Always empty. Jackett records an indexer's last failure message
+            here; Jacklet keeps only a count of consecutive failures, which
+            drives its backoff and the `status` filter, and reports the
+            failure itself on the request that hit it.
+        name:
+          type: string
+          description: The tracker's display name.
+        potatoenabled:
+          type: boolean
+          description: >
+            Always false. CouchPotato's API is a Jackett feature Jacklet does
+            not serve.
+        site_link:
+          type: string
+          description: The definition's first site link.
+        tags:
+          type: array
+          description: >
+            Always empty. Jackett's tags are a user's own labels on an
+            indexer, which Jacklet has no way to set.
+          items:
+            type: string
+        type:
+          type: string
+          description: The tracker's access type, such as `public` or `private`.
+      required:
+        - alternativesitelinks
+        - caps
+        - configured
+        - description
+        - id
+        - language
+        - last_error
+        - name
+        - potatoenabled
+        - site_link
+        - tags
+        - type
+
+    JackettResult:
+      type: object
+      description: >
+        One release, in the shape Jackett's own result cache serializes.
+        Two of Jackett's own fields are absent: `FirstSeen`, which is when a
+        release entered Jackett's in-memory result cache rather than a
+        property of the release, and `BlackholeLink`, which addresses a
+        blackhole directory Jacklet does not configure.
+
+
+        The fields Jackett leaves nullable are null here when a definition
+        scraped no value for them, as they are in Jackett. `Seeders`,
+        `Peers` and the two volume factors are the exception and are always
+        numbers: for those, zero is an answer rather than a gap — a dead
+        release genuinely has no seeders, and a download factor of zero is
+        what marks a freeleech.
+      properties:
+        Album:
+          type: string
+        Artist:
+          type: string
+        Author:
+          type: string
+        BookTitle:
+          type: string
+          description: >
+            The work's title, as distinct from `Title`, which is the
+            release's own title on the tracker.
+        Category:
+          type: array
+          description: >
+            Torznab category ids: every standard category the definition
+            maps the release's tracker category to, so one release may be
+            filed under several, each followed by the tracker's own custom
+            category (100000 and up) when the mapping has a description.
+            Empty for a release whose category maps to none, which this
+            endpoint, Jackett's interactive search, keeps and the Torznab
+            feed leaves out.
+          items:
+            type: integer
+            format: int32
+        CategoryDesc:
+          type: string
+          description: >
+            The names of the release's standard categories, joined by `, `.
+            A custom category is not named here.
+        Comments:
+          type: string
+          description: >
+            The same value as `Details`, under the older name for it.
+            Jackett's own result carries the page only as `Details`; this is
+            the one key here Jackett does not send, kept because a client
+            written against an older Jackett looks for it.
+        Description:
+          type: string
+        Details:
+          type: string
+          description: URL of the release's page on the tracker, if scraped.
+        DoubanId:
+          type: [integer, "null"]
+          format: int64
+        DownloadVolumeFactor:
+          type: number
+          description: >
+            Share of the download counted against a user's ratio; 0 is
+            freeleech and 1 is a normal release.
+        Files:
+          type: [integer, "null"]
+          format: int64
+        Gain:
+          type: [number, "null"]
+          description: >
+            The release's size in gibibytes times its seeder count, which is
+            Jackett's sort key for how much a release has moved.
+        Genres:
+          type: array
+          items:
+            type: string
+        Grabs:
+          type: [integer, "null"]
+          format: int64
+          description: Number of times the release has been snatched.
+        Guid:
+          type: string
+          description: >
+            The release's details page URL when the definition scrapes one,
+            falling back to the title.
+        Imdb:
+          type: [integer, "null"]
+          format: int64
+          description: >
+            The release's IMDb id as a bare number, which is how Jackett
+            reports it here. The XML feed carries the same id as text, in
+            the `imdb` and `imdbid` attributes.
+        InfoHash:
+          type: string
+        Label:
+          type: string
+        Languages:
+          type: array
+          description: >
+            The release's audio languages. A Cardigann definition declares
+            no field for these, so the array is always empty — emitted
+            rather than dropped, so a client reading it does not find null
+            where Jackett gives it an array.
+          items:
+            type: string
+        Link:
+          type: string
+          description: >
+            What to fetch to get the torrent. A magnet URI is given as it is
+            stored, whether the tracker served it or Jacklet built it from
+            an info hash (see `MagnetUri`). An HTTP link is rewritten to this
+            server's `/api/v2.0/indexers/{id}/download/{row}` endpoint, which
+            re-fetches it with Jacklet's own tracker session — a client has
+            no account on a private tracker and cannot follow the tracker's
+            link itself. When the server has an API key, the link carries it
+            as `apikey`, so the client can fetch the link as given.
+        MagnetUri:
+          type: string
+          description: >
+            The release's magnet URI. It is the one the tracker offers
+            beside the torrent file or, for a public or semi-private tracker
+            that gives only an info hash, one Jacklet builds from that hash,
+            carrying the announce URLs the operator configured, if any.
+            Empty when neither applies. `Link` stays the torrent file, which
+            a private tracker's results need, so a client that prefers a
+            magnet takes this instead.
+        MinimumRatio:
+          type: [number, "null"]
+        MinimumSeedTime:
+          type: [integer, "null"]
+          format: int64
+          description: Required seeding time in seconds.
+        Peers:
+          type: integer
+          format: int64
+          description: >
+            The leecher count, not the swarm size: Jackett subtracts the
+            seeders before serializing this field, and a client reading it
+            expects what Jackett puts in it.
+        Poster:
+          type: string
+          description: Absolute URL of the release's cover image, if scraped.
+        PublishDate:
+          type: string
+          description: >
+            Release date as stored (RFC 3339, UTC). Empty when the
+            definition yielded no parseable date.
+        Publisher:
+          type: string
+        RageID:
+          type: [integer, "null"]
+          format: int64
+        Seeders:
+          type: integer
+          format: int64
+        Size:
+          type: [integer, "null"]
+          format: int64
+        Subs:
+          type: array
+          description: >
+            The release's subtitle languages, always empty for the same
+            reason as `Languages`.
+          items:
+            type: string
+        TMDb:
+          type: [integer, "null"]
+          format: int64
+        TVDBId:
+          type: [integer, "null"]
+          format: int64
+        TVMazeId:
+          type: [integer, "null"]
+          format: int64
+        Title:
+          type: string
+        Track:
+          type: string
+        Tracker:
+          type: string
+          description: The display name of the indexer the release came from.
+        TrackerId:
+          type: string
+          description: >
+            The id of the indexer the release came from, which under a meta
+            indexer is not the id the request named.
+        TrackerType:
+          type: string
+          description: >
+            The indexer's type as its definition declares it, such as
+            `public` or `private`.
+        TraktId:
+          type: [integer, "null"]
+          format: int64
+        UploadVolumeFactor:
+          type: number
+          description: Multiplier applied to uploaded bytes.
+        Year:
+          type: [integer, "null"]
+          format: int64
+      required:
+        - Album
+        - Artist
+        - Author
+        - BookTitle
+        - Category
+        - CategoryDesc
+        - Comments
+        - Description
+        - Details
+        - DoubanId
+        - DownloadVolumeFactor
+        - Files
+        - Gain
+        - Genres
+        - Grabs
+        - Guid
+        - Imdb
+        - InfoHash
+        - Label
+        - Languages
+        - Link
+        - MagnetUri
+        - MinimumRatio
+        - MinimumSeedTime
+        - Peers
+        - Poster
+        - PublishDate
+        - Publisher
+        - RageID
+        - Seeders
+        - Size
+        - Subs
+        - TMDb
+        - TVDBId
+        - TVMazeId
+        - Title
+        - Track
+        - Tracker
+        - TrackerId
+        - TrackerType
+        - TraktId
+        - UploadVolumeFactor
+        - Year
+
+    SearchIndexer:
+      type: object
+      description: >
+        One indexer's part in a search, which is what lets a client tell
+        "this tracker is down" from "this tracker has nothing".
+      properties:
+        ElapsedTime:
+          type: integer
+          format: int64
+          description: How long refreshing this indexer took, in milliseconds.
+        Error:
+          type: string
+          description: >
+            Set when the indexer could not be refreshed, and empty when it
+            was. It says only that the search failed: the cause names the
+            tracker's address, so Jacklet logs it rather than serving it.
+            Results already stored for it are still returned.
+        ID:
+          type: string
+        Name:
+          type: string
+        Results:
+          type: integer
+          format: int32
+          description: How many of the returned releases came from this indexer.
+        Status:
+          type: integer
+          format: int32
+          description: >
+            0 when unknown, 1 when the indexer failed, 2 when it answered.
+      required: [ElapsedTime, Error, ID, Name, Results, Status]
+
+    SearchResults:
+      type: object
+      description: A search's releases, and each indexer's part in it.
+      properties:
+        Indexers:
+          type: array
+          description: >
+            One entry per indexer the request covered, in the order they
+            were searched.
+          examples:
+            - - ElapsedTime: 412
+                Error: ""
+                ID: example-tracker
+                Name: Example Tracker
+                Results: 1
+                Status: 2
+          items:
+            $ref: "#/components/schemas/SearchIndexer"
+        Results:
+          type: array
+          examples:
+            - - Album: ""
+                Artist: ""
+                Author: ""
+                BookTitle: ""
+                Category: [2040]
+                CategoryDesc: Movies/HD
+                Comments: https://tracker.example/details/1234
+                Description: ""
+                Details: https://tracker.example/details/1234
+                DoubanId: null
+                DownloadVolumeFactor: 0
+                Files: 3
+                Gain: 18.6
+                Genres: []
+                Grabs: 57
+                Guid: https://tracker.example/details/1234
+                Imdb: null
+                InfoHash: 0123456789abcdef0123456789abcdef01234567
+                Label: ""
+                Languages: []
+                Link: http://localhost:9117/api/v2.0/indexers/example-tracker/download/42
+                MagnetUri: ""
+                MinimumRatio: 1
+                MinimumSeedTime: 172800
+                Peers: 2
+                Poster: ""
+                PublishDate: "2026-03-15T08:30:00Z"
+                Publisher: ""
+                RageID: null
+                Seeders: 4
+                Size: 4992818790
+                Subs: []
+                TMDb: null
+                TVDBId: null
+                TVMazeId: null
+                Title: Example Release 2026 1080p
+                Track: ""
+                Tracker: Example Tracker
+                TrackerId: example-tracker
+                TrackerType: private
+                TraktId: null
+                UploadVolumeFactor: 1
+                Year: 2026
+          items:
+            $ref: "#/components/schemas/JackettResult"
+      required: [Indexers, Results]
+
+    TorznabError:
+      type: object
+      description: >
+        Torznab's error document, `<error code="…" description="…"/>`, which
+        carries its code and message as attributes of the root element.
+      examples:
+        - code: 100
+          description: Invalid API Key
+      xml:
+        name: error
+      properties:
+        code:
+          type: integer
+          format: int32
+          enum: [100, 201, 202, 203, 900]
+          description: >
+            The Torznab error code a client branches on: 100 for a rejected
+            `apikey`, 201 for an unknown indexer or a search none of its
+            trackers can answer, 202 for an unknown `t`, 203 for an operation
+            the indexer does not offer, and 900 for anything else.
+          examples: [100]
+          xml:
+            attribute: true
+        description:
+          type: string
+          description: >
+            What failed, for a person to read; a client branches on `code`.
+          examples: [Invalid API Key]
+          xml:
+            attribute: true
+      required: [code, description]
+
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      description: >
+        Required only when the server was started with `JACKLET_API_KEY`
+        set; omitted entirely, every endpoint is unauthenticated.
+      name: apikey
+      in: query

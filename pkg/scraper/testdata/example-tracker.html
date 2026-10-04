@@ -1,0 +1,69 @@
+<!--
+SPDX-FileCopyrightText: 2026 TorrPlay
+
+SPDX-License-Identifier: MIT
+-->
+
+<!doctype html>
+<!--
+  A search results page from a fictional torrent tracker, for exercising
+  the scraper against markup shaped like a real site's without pointing at
+  one. The rows deliberately vary: a raw byte count and a human-readable
+  size, a freeleech marker present on one row and absent on another, a
+  missing optional field, and a non-ASCII title.
+-->
+<html lang="en">
+<body>
+<table class="torrents">
+  <thead>
+    <tr class="row header"><th>Category</th><th>Name</th><th>Size</th></tr>
+  </thead>
+  <tbody>
+    <tr class="row">
+      <td class="cat"><a href="browse.php?c=10">Movies</a></td>
+      <td class="name"><a href="details.php?id=1001">Example Release (2024) 1080p</a></td>
+      <td class="dl"><a href="download.php?id=1001">Download</a></td>
+      <td class="size">1932735283</td>
+      <td class="seeds">120</td>
+      <td class="leech">8</td>
+      <td class="grabs">340</td>
+      <td class="added">15 Mar 2024</td>
+      <td class="flags"><img src="freeleech.png" alt="freeleech"></td>
+    </tr>
+    <tr class="row">
+      <td class="cat"><a href="browse.php?c=20">TV</a></td>
+      <td class="name"><a href="details.php?id=1002">Sample Show S01E02</a></td>
+      <td class="dl"><a href="download.php?id=1002">Download</a></td>
+      <td class="size">700 MB</td>
+      <td class="seeds">50</td>
+      <td class="leech">5</td>
+      <td class="grabs">12</td>
+      <td class="added">14 Mar 2024</td>
+      <td class="flags"></td>
+    </tr>
+    <tr class="row">
+      <td class="cat"><a href="browse.php?c=10">Movies</a></td>
+      <td class="name"><a href="details.php?id=1003">Тестовый Релиз (2024)</a></td>
+      <td class="dl"><a href="download.php?id=1003">Download</a></td>
+      <td class="size">3221225472</td>
+      <td class="seeds">7</td>
+      <td class="leech">1</td>
+      <td class="grabs">3</td>
+      <td class="added">13 Mar 2024</td>
+      <td class="flags"></td>
+    </tr>
+    <tr class="row promoted">
+      <td class="cat"><a href="browse.php?c=10">Movies</a></td>
+      <td class="name"><a href="details.php?id=9999">Sponsored Listing</a></td>
+      <td class="dl"><a href="download.php?id=9999">Download</a></td>
+      <td class="size">1048576</td>
+      <td class="seeds">0</td>
+      <td class="leech">0</td>
+      <td class="grabs">0</td>
+      <td class="added">13 Mar 2024</td>
+      <td class="flags"></td>
+    </tr>
+  </tbody>
+</table>
+</body>
+</html>

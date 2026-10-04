@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<caps>
+  <categories>
+    <category id="2040" name="Movies/HD"></category>
+    <category id="5040" name="TV/HD"></category>
+  </categories>
+  <limits default="50" max="100"></limits>
+  <searching>
+    <audio-search available="no"></audio-search>
+    <book-search available="no"></book-search>
+    <movie-search available="yes" supportedParams="q,imdbid"></movie-search>
+    <search available="yes" supportedParams="q"></search>
+    <tv-search available="yes" supportedParams="q,season,ep"></tv-search>
+  </searching>
+  <server email="ops@example.org" title="Golden Tracker" url="https://jacklet.example"></server>
+</caps>

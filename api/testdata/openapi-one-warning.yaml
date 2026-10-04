@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# A document that passes every rule in .vacuum.yml but one, which it
+# breaks with a single warning, a summary ending in a period. A minimum
+# score of 100 has to fail it.
+
+openapi: 3.2.1
+
+info:
+  title: Gate
+  description: A document that passes every rule.
+  contact:
+    name: Jacklet
+    url: https://github.com/torrplay/jacklet
+  license:
+    name: MIT
+    identifier: MIT
+  version: "1.0"
+
+servers:
+  - url: /
+
+tags:
+  - name: Health
+    description: Whether the service answers.
+
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Liveness probe.
+      description: Answers 200 while the service runs.
+      operationId: checkHealth
+      responses:
+        "200":
+          description: The service is running.
