@@ -1,0 +1,79 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+name: Bug report
+description: Jacklet does something other than what it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please do not paste your API key, an admin password, tracker credentials, or a passkey anywhere in this form, and do not ask where to find a particular release. Requests for copyrighted material are out of scope.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `jacklet version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you run it
+      options:
+        - Prebuilt binary
+        - Debian or RPM package
+        - Windows installer
+        - Docker
+        - Built from source
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and architecture
+      placeholder: Debian 13 arm64
+  - type: input
+    id: definition
+    attributes:
+      label: Indexer definition
+      description: The definition's `id` and where it came from, such as a Jackett release or your own file. Say so if the problem is not tied to one indexer.
+  - type: textarea
+    id: request
+    attributes:
+      label: The request
+      description: The URL or client action that shows the problem, with the `apikey` value removed.
+      render: text
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The relevant lines from Jacklet's log, which is JSON on standard output unless a log file is set. Remove anything private first.
+      render: json
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: Other clients involved, such as Sonarr, Radarr or Prowlarr, a reverse proxy, or FlareSolverr.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for this problem.
+          required: true
+        - label: I removed API keys, passwords and passkeys from everything above.
+          required: true

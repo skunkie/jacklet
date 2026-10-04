@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/torrplay/jacklet#documentation
+    about: Setup, configuration, adding an indexer and how Jacklet works.
+  - name: Report a vulnerability
+    url: https://github.com/torrplay/jacklet/security/advisories/new
+    about: Report a security problem privately rather than in a public issue.

@@ -1,0 +1,69 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# git-cliff renders the release notes from the commit log, reading the type
+# and scope off each subject. The release workflow runs it for the tag being
+# released; `git cliff --unreleased` previews what the next tag would say.
+
+[changelog]
+# Rendered once per release. `version` is the tag being released and is
+# unset for --unreleased, hence the fallback heading.
+body = """{% if version %}\
+## {{ version | trim_start_matches(pat="v") }} — {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+## Unreleased
+{% endif %}
+{% for group, commits in commits | group_by(attribute="group") %}\
+### {{ group | split(pat="@") | last }}
+
+{% for commit in commits %}\
+- {% if commit.breaking %}**breaking** {% endif %}\
+{% if commit.scope %}**{{ commit.scope }}**: {% endif %}\
+{{ commit.message }} \
+([{{ commit.id | truncate(length=7, end="") }}]({{ self::repo_url() }}/commit/{{ commit.id }}))
+{% endfor %}
+{% endfor %}\
+{% if version and previous and previous.version %}\
+**Full changelog**: {{ self::repo_url() }}/compare/{{ previous.version }}...{{ version }}
+{% endif %}\
+{%- macro repo_url() -%}
+https://github.com/{{ remote.github.owner }}/{{ remote.github.repo }}
+{%- endmacro -%}
+"""
+
+trim = true
+
+[git]
+conventional_commits = true
+# A subject with no `type(scope):` prefix carries nothing to group it by, so
+# it is dropped rather than landing in the notes ungrouped. A merge commit is
+# the usual case.
+filter_unconventional = true
+# Likewise for a conventional commit whose type no parser below claims.
+filter_commits = true
+split_commits = false
+# A breaking change is never skipped, whatever its type.
+protect_breaking_commits = true
+tag_pattern = "v[0-9]*"
+topo_order = false
+sort_commits = "oldest"
+
+# The first matching parser wins. Groups render in alphabetical order, so
+# each name carries a numeric sort prefix that the template strips at the
+# "@", putting the sections in the order below.
+commit_parsers = [
+  { message = "^feat", group = "0@Features" },
+  { message = "^fix", group = "1@Bug fixes" },
+  { message = "^perf", group = "2@Performance" },
+  { message = "^refactor", group = "3@Refactoring" },
+  { message = "^revert", group = "4@Reverts" },
+  { message = "^docs", group = "5@Documentation" },
+  { message = "^test", group = "6@Tests" },
+  { message = "^(build|ci)", group = "7@Build & CI" },
+  { message = "^chore\\(deps\\)", group = "8@Dependencies" },
+  # Housekeeping that says nothing to someone reading the notes to decide
+  # whether to upgrade.
+  { message = "^chore\\(release\\)", skip = true },
+  { message = "^(chore|style)", skip = true },
+]

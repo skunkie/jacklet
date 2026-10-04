@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# How yamlfmt formats the repository's YAML. Folded scalars keep their line
+# breaks, so a description stays wrapped as written, and blank lines are
+# kept, so the spacing between entries and a paragraph break inside a
+# description survive. Git-ignored files are skipped, since the definitions
+# and tracker settings an operator keeps in the checkout are not the
+# project's to format.
+
+gitignore_excludes: true
+formatter:
+  type: basic
+  indent: 2
+  retain_line_breaks: true
+  scan_folded_as_literal: true

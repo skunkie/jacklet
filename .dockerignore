@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# The build stage needs only the module files and the Go source.
+# Everything below either bloats the context or would leak local state into
+# an image.
+
+# The image ships an empty definitions directory, created in the build
+# stage. Keeping definitions/ out of the context entirely means the one
+# checked in for development cannot reach a published image by accident.
+definitions/
+
+.git
+.github
+.gitignore
+.golangci.yml
+.dockerignore
+Dockerfile
+
+# Local runtime state, matching .gitignore's defaults: a developer's
+# database or tracker credentials must never be baked into an image.
+config/
+*.db
+*.db-shm
+*.db-wal
+
+# Docs and licensing metadata are not needed to compile.
+*.md
+LICENSES/
+REUSE.toml
