@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+name: Feature request
+description: Suggest a change or addition.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Jacklet favors a small footprint and few dependencies over full parity with Jackett's plugin ecosystem, and aims to run Jackett's own indexer definitions unmodified. A request that fits those goals is the easiest to accept.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do and why it is not possible or is awkward today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: The behavior you have in mind, and any alternatives you considered.
+    validations:
+      required: true
+  - type: textarea
+    id: jackett
+    attributes:
+      label: Jackett's behavior
+      description: If Jackett already does this, say how, so Jacklet can match it where clients would notice. Leave empty if it does not apply.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for this request.
+          required: true

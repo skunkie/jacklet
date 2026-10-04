@@ -1,0 +1,131 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# A starting point for running Jacklet under Docker Compose. Copy it next
+# to your definitions and edit; nothing here is read by the build.
+#
+# Settings are documented in docs/configuration.md, and every one of them
+# is a JACKLET_* variable, since a compose file is a shared namespace where
+# a bare API_KEY or DB_PATH is liable to be another service's. The proxy
+# variables are the exception, being the standard names every HTTP client
+# reads.
+
+services:
+  jacklet:
+    # Pin a release instead of latest, here and for flaresolverr below, so
+    # an image changes only when you choose. Jacklet's tags are bare
+    # versions, such as 1.2.3; FlareSolverr's carry a leading v.
+    image: ghcr.io/torrplay/jacklet:latest
+    restart: unless-stopped
+    ports:
+      - "9117:9117"
+    environment:
+      # Without an API key every indexer endpoint is open to anyone who can
+      # reach the port, so this fails the "up" rather than defaulting to an
+      # unauthenticated server. Generate one with `openssl rand -hex 16`
+      # and put it in a .env file beside this one, or in your shell.
+      JACKLET_API_KEY: ${JACKLET_API_KEY:?set JACKLET_API_KEY, e.g. in a .env file beside this compose file}
+
+      # Enables /admin when set; left unset, the panel is not served. Make
+      # the hash with
+      #
+      #   docker run --rm -i ghcr.io/torrplay/jacklet:latest hash-password
+      #
+      # typing the password and pressing Enter (it is shown as you type),
+      # and set the hash it prints in the .env file, in single quotes:
+      #
+      #   JACKLET_ADMIN_PASSWORD_HASH='pbkdf2-sha256$...'
+      #
+      # The quotes matter. The hash separates its fields with "$", and
+      # Compose expands every "$" in this file and in an unquoted or
+      # double-quoted .env value, which leaves Jacklet refusing to start
+      # on a mangled hash. A hash written here directly needs each "$"
+      # doubled instead.
+      JACKLET_ADMIN_PASSWORD_HASH: ${JACKLET_ADMIN_PASSWORD_HASH:-}
+
+      # Set this when Jacklet sits behind a TLS-terminating reverse proxy:
+      # generated links otherwise point at the origin the request arrived on.
+      #JACKLET_BASE_URL: https://jacklet.example.com
+
+      # Advertised in the Torznab caps and feed, which some clients show to
+      # the end user. Unset advertises no address at all.
+      #JACKLET_CONTACT_EMAIL: ops@example.org
+
+      # For trackers behind an anti-bot challenge, together with the
+      # flaresolverr service below. A tracker uses it once its own
+      # flaresolverr setting is on, which the "Use FlareSolverr" checkbox on
+      # its admin page does; docs/configuration.md describes the setting,
+      # and docs/definitions.md what changes when it is on.
+      #JACKLET_FLARESOLVERR_URL: http://flaresolverr:8191
+
+      # Announce URLs, comma-separated, added to a magnet built from an info
+      # hash so a client finds peers through them as well as the DHT. Unset
+      # builds trackerless magnets.
+      #JACKLET_MAGNET_TRACKERS: udp://tracker.example.org:6969/announce
+
+      # Sends Jacklet's own requests to trackers -- searches, logins and
+      # torrent downloads -- through a proxy. These are the standard proxy
+      # variables rather than JACKLET_* settings, read by Go's HTTP client;
+      # socks5:// works too, and credentials go in the URL as
+      # http://user:password@host:port, best kept in .env as with the API
+      # key. A tracker using FlareSolverr is fetched by its browser, which
+      # ignores these: set PROXY_URL on the flaresolverr service below to
+      # the same proxy, since downloads still come from Jacklet and a
+      # Cloudflare clearance is usually bound to the address that earned
+      # it. NO_PROXY keeps Jacklet's own calls to FlareSolverr off the
+      # proxy. A change applies on restart.
+      #HTTPS_PROXY: http://proxy.example.org:3128
+      #HTTP_PROXY: http://proxy.example.org:3128
+      #NO_PROXY: flaresolverr
+
+      # The image already points DEFINITIONS_DIR, CONFIG_DIR and DB_PATH at
+      # the paths mounted below, so they need no entry here.
+    volumes:
+      # Definitions are yours: Jacklet ships none, and /app/definitions is
+      # empty in the image. Any file from Jackett's Definitions/ directory
+      # works unmodified, for example:
+      #
+      #   mkdir -p definitions
+      #   curl -sSLo definitions/<indexer>.yml \
+      #     https://raw.githubusercontent.com/Jackett/Jackett/master/src/Jackett.Common/Definitions/<indexer>.yml
+      #
+      # Create the directory before the first "up": Docker usually creates
+      # a missing one owned by root, which you then cannot write to without
+      # sudo.
+      #
+      # Read-only, since Jacklet only reads them, and a bind mount so adding
+      # or editing a file on the host takes effect on the next request -- no
+      # restart.
+      - ./definitions:/app/definitions:ro
+
+      # Per-indexer overrides, including tracker credentials in plaintext,
+      # and the scraped-results database. Both live on volumes so that
+      # pulling a new image does not discard them with the old container's
+      # layer.
+      - jacklet-config:/config
+      - jacklet-data:/data
+
+  # FlareSolverr drives a real browser through a tracker's challenge, so it
+  # takes memory for as long as a tracker holds a session. Jacklet reaches
+  # it by service name and contacts it only when a search needs it, so the
+  # two start in either order. Its port is not published: nothing but
+  # Jacklet should be able to make it fetch pages.
+  #flaresolverr:
+    #image: ghcr.io/flaresolverr/flaresolverr:latest
+    #restart: unless-stopped
+    #environment:
+      #LOG_LEVEL: info
+
+      # The proxy its browser uses, applied to each session as Jacklet
+      # creates it. HTTPS_PROXY above does not reach it. Uncomment the
+      # username and password only for a proxy that needs them, with the
+      # values in .env: set even to empty, they change how FlareSolverr
+      # connects.
+      #PROXY_URL: http://proxy.example.org:3128
+      #PROXY_USERNAME: ${FLARESOLVERR_PROXY_USERNAME}
+      #PROXY_PASSWORD: ${FLARESOLVERR_PROXY_PASSWORD}
+
+volumes:
+  jacklet-config:
+  jacklet-data:
