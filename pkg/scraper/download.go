@@ -5,6 +5,8 @@
 package scraper
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -36,22 +38,21 @@ var ErrDownloadTooLarge = errors.New("torrent file is larger than the download c
 // and must close it. A tracker whose download leads to a magnet instead
 // yields Magnet and no Body, for the caller to hand to the client.
 //
+// Body starts after any whitespace or byte order mark the tracker put
+// ahead of the file, so a download block's torrent test and the client
+// both see the file as it begins.
+//
 // Body is capped: reading it yields at most maxDownloadBytes and then
 // fails with ErrDownloadTooLarge, so a tracker cannot push unbounded
 // volume through Jacklet to the client that asked for a torrent file.
 type Download struct {
-	Body        io.ReadCloser
-	ContentType string
-	Magnet      string
+	Body   io.ReadCloser
+	Magnet string
 }
 
 // maxDownloadRedirects is the number of redirects a download may follow,
 // matching net/http's own default, which a custom CheckRedirect replaces.
 const maxDownloadRedirects = 10
-
-// torrentContentType is what a tracker serving a .torrent file should
-// report, and what Jacklet reports to the client.
-const torrentContentType = "application/x-bittorrent"
 
 // defaultMaxDownloadBytes bounds one torrent file. It is far below
 // defaultMaxResponseBytes because the two are bounding different things: a
@@ -244,24 +245,48 @@ func (s *Scraper) fetchTorrent(ctx context.Context, def *Tracker, target *url.UR
 		return nil, err
 	}
 
-	contentType := resp.Header.Get("Content-Type")
 	// A tracker that has lost the session answers with a login page rather
 	// than a 401, and saving that as a ".torrent" is the confusing failure
 	// this endpoint exists to avoid.
-	if isHTML(contentType) {
+	if isHTML(resp.Header.Get("Content-Type")) {
 		resp.Body.Close()
 		return nil, errDownloadWebPage
-	}
-	if contentType == "" {
-		contentType = torrentContentType
 	}
 
 	body := &limitedBody{
 		closer: resp.Body,
 		reader: &io.LimitedReader{N: s.maxDownloadBytes + 1, R: resp.Body},
 	}
-	return &Download{Body: body, ContentType: contentType}, nil
+	reader := bufio.NewReader(body)
+	skipLeadingSpace(reader)
+	// A login page labeled as something else is still a page: no torrent
+	// file starts with "<".
+	if start, _ := reader.Peek(1); len(start) > 0 && start[0] == '<' {
+		body.Close()
+		return nil, errDownloadWebPage
+	}
+	return &Download{Body: peekedBody{Closer: body, Reader: reader}}, nil
 }
+
+// skipLeadingSpace discards the whitespace and byte order marks body
+// starts with, which a tracker's script can emit ahead of what it serves.
+// Both are read through to the first other byte, or to the end of body.
+func skipLeadingSpace(body *bufio.Reader) {
+	for {
+		start, _ := body.Peek(len(utf8BOM))
+		switch {
+		case bytes.HasPrefix(start, utf8BOM):
+			_, _ = body.Discard(len(utf8BOM))
+		case len(start) > 0 && strings.IndexByte(" \t\r\n", start[0]) >= 0:
+			_, _ = body.Discard(1)
+		default:
+			return
+		}
+	}
+}
+
+// utf8BOM is the byte order mark a text editor may put ahead of a file.
+var utf8BOM = []byte("\uFEFF")
 
 // trackerSiteOf returns the tracker link target belongs to, or
 // ErrForeignDownloadURL when it belongs to none or is not a web address.

@@ -129,14 +129,19 @@ paths:
             format: int64
       responses:
         "200":
-          description: The torrent file.
+          description: >
+            The torrent file, served as application/x-bittorrent whatever
+            type the tracker labeled it with.
           content:
             application/x-bittorrent:
               schema:
                 type: string
                 format: binary
         "302":
-          description: The result's download is a magnet, and the client is redirected to it.
+          description: >
+            The result's download is a magnet, the tracker answered with one
+            as its body, or the torrent file could not be fetched and the
+            result also carries a magnet, and the client is redirected to it.
         "400":
           description: >
             The row id was not a number, or the stored link does not belong
@@ -146,14 +151,18 @@ paths:
         "404":
           description: >
             No such indexer, no such stored result for it, or the result
-            carries no download link.
+            carries no download link, or only a magnet that cannot be
+            redirected to.
         "500":
           $ref: "#/components/responses/InternalServerError"
         "502":
           description: >
             The tracker refused the request, could not be reached, or
-            answered with a web page rather than a torrent — which usually
-            means the login session lapsed.
+            answered with something other than a torrent file: a web page,
+            which usually means the login session lapsed, an error in plain
+            text or JSON, or nothing at all. A magnet the tracker supplies
+            that is cut off, too long to send as a redirect, or names no
+            exact topic is answered the same way.
 
   /api/v2.0/indexers/{id}/results:
     get:

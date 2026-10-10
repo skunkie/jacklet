@@ -224,8 +224,13 @@ func keepIfTorrent(download *Download) error {
 	if download.Magnet != "" {
 		return nil
 	}
-	reader := bufio.NewReader(download.Body)
-	first, err := reader.Peek(1)
+	// A body fetchTorrent returns is already buffered, and is peeked there
+	// rather than through a buffer of its own.
+	body, isBuffered := download.Body.(peekedBody)
+	if !isBuffered {
+		body = peekedBody{Closer: download.Body, Reader: bufio.NewReader(download.Body)}
+	}
+	first, err := body.Peek(1)
 	if err != nil && !errors.Is(err, io.EOF) {
 		download.Body.Close()
 		return err
@@ -234,7 +239,7 @@ func keepIfTorrent(download *Download) error {
 		download.Body.Close()
 		return errNotTorrent
 	}
-	download.Body = peekedBody{Reader: reader, Closer: download.Body}
+	download.Body = body
 	return nil
 }
 
@@ -242,7 +247,7 @@ func keepIfTorrent(download *Download) error {
 // its start, closing the body it buffers.
 type peekedBody struct {
 	io.Closer
-	io.Reader
+	*bufio.Reader
 }
 
 // selectDownloadValue reads selector's value from page, as a row's field

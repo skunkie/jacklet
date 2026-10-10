@@ -154,7 +154,7 @@ func TestIsHTML(t *testing.T) {
 func newDownloadTracker(t *testing.T, bodyBytes int, maxBytes int64) (*Scraper, *Tracker, string) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", torrentContentType)
+		w.Header().Set("Content-Type", "application/x-bittorrent")
 		_, err := io.WriteString(w, strings.Repeat("x", bodyBytes))
 		assert.NoError(t, err)
 	}))
@@ -309,7 +309,7 @@ func TestWithinSite(t *testing.T) {
 // this test whether or not that rule exists.
 func TestDownloadFollowsProtocolRelativeRedirect(t *testing.T) {
 	bulk := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", torrentContentType)
+		w.Header().Set("Content-Type", "application/x-bittorrent")
 		_, _ = w.Write([]byte("d8:announcee"))
 	}))
 	defer bulk.Close()
@@ -337,7 +337,7 @@ func TestDownloadFollowsProtocolRelativeRedirect(t *testing.T) {
 // that merely resembles its own.
 func TestDownloadRefusesRedirectOffTheSite(t *testing.T) {
 	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", torrentContentType)
+		w.Header().Set("Content-Type", "application/x-bittorrent")
 		_, _ = w.Write([]byte("d8:announcee"))
 	}))
 	defer foreign.Close()

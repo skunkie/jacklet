@@ -115,6 +115,27 @@ func TestScraperTriesTheNextSelectorWhenALinkIsNotATorrent(t *testing.T) {
 	})
 }
 
+// A tracker's script can emit whitespace or a byte order mark ahead of a
+// torrent file. The link is still a torrent file to a download block's
+// test, and the body begins with the file itself.
+func TestScraperDownloadSkipsWhatPrecedesATorrentFile(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/details.php", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`<html><body><a class="dl" href="/file.torrent">Torrent</a></body></html>`))
+	})
+	mux.HandleFunc("/file.torrent", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("\uFEFF\r\n" + testTorrent))
+	})
+	site := httptest.NewServer(mux)
+	defer site.Close()
+
+	scrpr := New(NewConfigStore(""), "", slog.New(slog.DiscardHandler))
+	def := downloadTracker(t, site, "download:\n  selectors:\n    - selector: a.dl\n      attribute: href\n")
+	download, err := scrpr.Download(t.Context(), def, site.URL+"/details.php")
+	require.NoError(t, err, "the link was not taken for a torrent file")
+	require.Equal(t, testTorrent, readDownload(t, download), "what preceded the file reached its body")
+}
+
 // A selector may read a magnet, which is handed on rather than fetched.
 func TestScraperDownloadSelectorCanFindAMagnet(t *testing.T) {
 	const magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
@@ -336,6 +357,10 @@ func TestScraperDownloadClearsTheLoginOnlyWhenItEndsOnAPage(t *testing.T) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write([]byte(`<html><body>Say thanks first</body></html>`))
 	})
+	mux.HandleFunc("/mislabeled", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Write([]byte("\n<html><body>Please sign in</body></html>"))
+	})
 	mux.HandleFunc("/file.torrent", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte(testTorrent))
 	})
@@ -364,6 +389,14 @@ func TestScraperDownloadClearsTheLoginOnlyWhenItEndsOnAPage(t *testing.T) {
 		_, err := scrpr.Download(t.Context(), def, site.URL+"/notice")
 		require.ErrorIs(t, err, errDownloadWebPage)
 		require.False(t, scrpr.loginIsFresh(TrackerID(def)), "a download answered with a page kept the login")
+	})
+
+	t.Run("the download ends on a page labeled as a file", func(t *testing.T) {
+		def := &Tracker{ID: "example", Links: []string{site.URL + "/"}, Name: "Example Tracker"}
+		scrpr.markLoggedIn(TrackerID(def))
+		_, err := scrpr.Download(t.Context(), def, site.URL+"/mislabeled")
+		require.ErrorIs(t, err, errDownloadWebPage)
+		require.False(t, scrpr.loginIsFresh(TrackerID(def)), "a page served under a file's type kept the login")
 	})
 }
 
