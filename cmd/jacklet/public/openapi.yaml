@@ -131,7 +131,8 @@ paths:
         "200":
           description: >
             The torrent file, served as application/x-bittorrent whatever
-            type the tracker labeled it with.
+            type the tracker labeled it with, and encoded again with its
+            dictionary keys sorted, as Jackett serves it.
           content:
             application/x-bittorrent:
               schema:
@@ -160,9 +161,10 @@ paths:
             The tracker refused the request, could not be reached, or
             answered with something other than a torrent file: a web page,
             which usually means the login session lapsed, an error in plain
-            text or JSON, or nothing at all. A magnet the tracker supplies
-            that is cut off, too long to send as a redirect, or names no
-            exact topic is answered the same way.
+            text or JSON, nothing at all, or a torrent file that does not
+            parse, is cut short or is larger than the download cap. A magnet
+            the tracker supplies that is cut off, too long to send as a
+            redirect, or names no exact topic is answered the same way.
 
   /api/v2.0/indexers/{id}/results:
     get:

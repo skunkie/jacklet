@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -25,7 +24,7 @@ import (
 // The proxy fetches the torrent with Jacklet's tracker session and streams
 // it back, rather than handing the client a link it cannot authenticate.
 func TestTorznabHandlerDownloadFetchesWithTheTrackerSession(t *testing.T) {
-	const torrent = "d8:announce7:exampleeee"
+	const torrent = "d8:announce7:examplee"
 
 	var gotCookie, gotUserAgent string
 	tracker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -119,6 +118,11 @@ func TestTorznabHandlerDownloadRejectsABodyThatIsNotATorrent(t *testing.T) {
 		{name: "magnet one byte over the cap", body: sampleMagnetOfLength(torznab.MaxMagnetBytes+1) + "\n", contentType: "text/plain"},
 		{name: "magnet with a control character", body: "magnet:?xt=urn:btih:0123\x00junk\n", contentType: "text/plain"},
 		{name: "magnet with no exact topic", body: "magnet: link unavailable, please log in\n", contentType: "text/plain"},
+		// Starting as a torrent file does is not enough: the whole file has
+		// to parse, as it does for Jackett.
+		{name: "torrent cut short", body: "d8:announce7:exam", contentType: "application/x-bittorrent"},
+		{name: "torrent with a duplicate key", body: "d4:name4:test4:name4:teste", contentType: "application/x-bittorrent"},
+		{name: "larger than the cap", body: "d" + strings.Repeat("x", 1<<20), contentType: "application/x-bittorrent"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := downloadFrom(t, func(w http.ResponseWriter, _ *http.Request) {
@@ -261,7 +265,7 @@ func TestServeTorrent_LogsAFallbackAsAWarning(t *testing.T) {
 // A tracker's script can emit whitespace or a byte order mark ahead of the
 // torrent file, which is served without them, as the file it precedes.
 func TestTorznabHandlerDownloadServesATorrentAfterLeadingSpace(t *testing.T) {
-	const torrent = "d8:announce7:exampleeee"
+	const torrent = "d8:announce7:examplee"
 	rec := downloadFrom(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/x-bittorrent")
 		w.Write([]byte("\uFEFF\r\n \t" + torrent))
@@ -271,11 +275,26 @@ func TestTorznabHandlerDownloadServesATorrentAfterLeadingSpace(t *testing.T) {
 	require.Equal(t, torrent, rec.Body.String(), "the leading whitespace reached the torrent file")
 }
 
+// A torrent file is served as Jackett serves it, encoded again with its
+// dictionary keys sorted, since Sonarr refuses one whose keys are not, and
+// without whatever the tracker sent after it.
+func TestTorznabHandlerDownloadServesATorrentWithSortedKeys(t *testing.T) {
+	rec := downloadFrom(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-bittorrent")
+		w.Write([]byte("d4:infod4:name4:test6:lengthi5ee8:announce3:urle\n"))
+	}, "")
+
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	require.Equal(t, "d8:announce3:url4:infod6:lengthi5e4:name4:testee", rec.Body.String())
+	require.Equal(t, strconv.Itoa(rec.Body.Len()), rec.Header().Get("Content-Length"),
+		"the file went out without its length")
+}
+
 // A row that links to a torrent file is served the file, as its proxied
 // link in the feed promises, whatever magnet it also carries: a client
 // wanting the magnet reads it from the feed.
 func TestTorznabHandlerDownloadServesTheTorrentFileOfARowWithAMagnet(t *testing.T) {
-	const torrent = "d8:announce7:exampleeee"
+	const torrent = "d8:announce7:examplee"
 	rec := downloadFrom(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/x-bittorrent")
 		w.Write([]byte(torrent))
@@ -518,7 +537,8 @@ func TestTorznabHandlerDownloadRequiresTheAPIKey(t *testing.T) {
 // A tracker that breaks off mid-download must not look like a success to
 // the client: a .torrent is saved to disk, so an empty or truncated file
 // arriving under a 200 is the failure that gets noticed only later, when
-// the torrent client rejects it.
+// the torrent client rejects it. The file is read whole before anything
+// is sent, so the failure is answered as one.
 func TestTorznabHandlerDownloadFailureIsNotAQuietSuccess(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -542,7 +562,7 @@ func TestTorznabHandlerDownloadFailureIsNotAQuietSuccess(t *testing.T) {
 				// failure inside the proxy's copy rather than its request.
 				w.WriteHeader(http.StatusOK)
 				if tc.write > 0 {
-					_, _ = w.Write(make([]byte, tc.write))
+					_, _ = w.Write([]byte(strings.Repeat("d8:announce", tc.write))[:tc.write])
 				}
 				if flusher, ok := w.(http.Flusher); ok {
 					flusher.Flush()
@@ -579,15 +599,9 @@ search:
 			defer jacklet.Close()
 
 			resp, err := jacklet.Client().Get(fmt.Sprintf("%s/api/v2.0/indexers/%s/download/%d", jacklet.URL, testIndexerID, rowID))
-			if err != nil {
-				// The connection was broken after the headers went out,
-				// which is the truncated case reported as a failure.
-				return
-			}
+			require.NoError(t, err)
 			defer resp.Body.Close()
-			body, readErr := io.ReadAll(resp.Body)
-			require.False(t, resp.StatusCode == http.StatusOK && readErr == nil,
-				"a failed download returned 200 with %d bytes and no error", len(body))
+			require.Equal(t, http.StatusBadGateway, resp.StatusCode, "a failed download was not answered as one")
 		})
 	}
 }

@@ -62,13 +62,9 @@ const maxDownloadRedirects = 10
 // would leave 32 MiB of slack that no legitimate torrent file needs, for
 // each concurrent download.
 //
-// Unlike a scrape, exceeding this cannot fail the request cleanly: the
-// body is streamed straight to the client, so by the time the cap is
-// reached the status and headers have been sent and the client already
-// holds part of the file. The read fails with ErrDownloadTooLarge, which
-// the caller treats as it does any other mid-stream failure — it breaks
-// the connection so the client sees a failed transfer rather than a
-// truncated file under a 200.
+// The body is handed back unread, so exceeding this surfaces as a read
+// that fails with ErrDownloadTooLarge rather than as an error from
+// Download, and a caller can tell a capped file from a whole one.
 const defaultMaxDownloadBytes = 1 << 20 // 1 MiB
 
 // limitedBody is a response body that stops after a cap. It reports

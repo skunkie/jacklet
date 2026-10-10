@@ -87,6 +87,11 @@ func (t *Torznab) Download(w http.ResponseWriter, r *http.Request) {
 // save. A magnet is handed back as a redirect, since the client resolves
 // one itself.
 //
+// The file is read whole and encoded again with its dictionary keys sorted,
+// as Jackett serves it, before anything is written, so a file that does not
+// parse, or runs past the download cap, is answered as a failure rather
+// than sent in part.
+//
 // A download that cannot be served, because the tracker fails, answers
 // with something other than a torrent file, or leads to a magnet that
 // cannot be redirected to, falls back to a redirect to the row's own
@@ -99,14 +104,6 @@ func (t *Torznab) Download(w http.ResponseWriter, r *http.Request) {
 // The caller decides who may ask: this serves a row it is given, having
 // nothing to say about how the request was authenticated. The admin panel
 // and the Torznab API both arrive here after their own checks.
-//
-// A tracker that breaks off once part of the file has been sent panics
-// with http.ErrAbortHandler, which is how net/http is told to drop the
-// connection rather than close the response cleanly and leave the client
-// holding a truncated .torrent it believes is whole. http.Server recovers
-// that panic silently, so this must be served by one: recovery middleware
-// of the caller's own has to re-panic on http.ErrAbortHandler rather than
-// report it as a crash.
 func ServeTorrent(ctx context.Context, w http.ResponseWriter, r *http.Request, scrpr *scraper.Scraper, def *scraper.Tracker, row scraper.Torrent, logger *slog.Logger) {
 	indexerID := scraper.TrackerID(def)
 
@@ -211,28 +208,36 @@ func ServeTorrent(ctx context.Context, w http.ResponseWriter, r *http.Request, s
 		}
 		return
 	}
+	// Checked before the rest is read, so a page is not downloaded whole
+	// only to be refused.
 	if start[0] != 'd' {
 		refuse(notTorrentMessage, fmt.Errorf("the body starts with %q", start[:1]))
+		return
+	}
+	data, err := io.ReadAll(body)
+	if err != nil {
+		refuse("failed to read a torrent", err)
+		return
+	}
+	torrent, err := canonicalTorrent(data)
+	if err != nil {
+		refuse(notTorrentMessage, err)
 		return
 	}
 
 	// Whatever type the tracker labeled the file with, what is served is a
 	// torrent file, so it goes out as one and a browser may not guess
-	// another from the body.
+	// another from the body. Its length is sent ahead, so a client that
+	// loses the end of it knows the file is incomplete.
 	w.Header().Set("Content-Type", torrentContentType)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment",
 		map[string]string{"filename": torrentFilename(row.Name)}))
-	if _, err = io.Copy(w, body); err == nil {
-		return
+	w.Header().Set("Content-Length", strconv.Itoa(len(torrent)))
+	if _, err := w.Write(torrent); err != nil {
+		// The client went away; there is no one left to tell.
+		logger.Debug("failed to send a torrent", "indexer", indexerID, "row", row.ID, "error", err)
 	}
-	logger.Error("failed to stream a torrent", "indexer", indexerID, "row", row.ID, "error", err)
-	// The file's start is already on its way, including when the tracker
-	// ran past the download cap. Returning normally would close the
-	// chunked response cleanly and the client would keep a truncated
-	// .torrent as though it were whole, so the connection is broken
-	// instead to make the transfer fail on the client's side too.
-	panic(http.ErrAbortHandler)
 }
 
 // readMagnetLine reads the magnet link body starts with: its first line,

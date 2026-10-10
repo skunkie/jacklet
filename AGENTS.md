@@ -191,7 +191,7 @@ Each subsystem's full record is an Agent Skill; the entry here names the rules m
   - A torrent file never goes through FlareSolverr; a download presents the cookies and user agent the browser last held instead.
   - FlareSolverr cannot carry `search.headers` (`warnUncarriedHeaders` says so once per tracker), and it mirrors the definition's HTTP method.
 - **Downloads** (`Torznab.Download`, `ServeTorrent`, `Scraper.Download`): the full record is in `.agents/skills/jacklet-downloads/SKILL.md`; read it before changing how a release is downloaded. The rules most easily undone:
-  - A torrent file is fetched with Jacklet's own session and streamed to the client, capped at `defaultMaxDownloadBytes`; a magnet is redirected to rather than fetched.
+  - A torrent file is fetched with Jacklet's own session, capped at `defaultMaxDownloadBytes`, read whole and encoded again with its dictionary keys sorted (`canonicalTorrent`), as Jackett serves it, before anything is sent; a magnet is redirected to rather than fetched.
   - Every request a download makes must name one of the tracker's own hosts, and a torrent file's redirect may neither leave them nor drop from HTTPS to HTTP.
   - The endpoint takes a row id, never a URL, so it cannot be pointed at an arbitrary address.
   - A failed download tells the client only which indexer failed, and the cause, which names the tracker's address, stays in the log.
