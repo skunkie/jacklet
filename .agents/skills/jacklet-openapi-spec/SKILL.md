@@ -1,6 +1,6 @@
 ---
 name: jacklet-openapi-spec
-description: How Jacklet's OpenAPI document (cmd/jacklet/public/openapi.yaml) is ordered, served and tested against the handlers. Use when adding or changing an endpoint, a query parameter or a response field, when editing openapi.yaml or the /docs page, or when pkg/torznab/openapi_test.go fails.
+description: How Jacklet's OpenAPI document (cmd/jacklet/public/openapi.yaml) is ordered, written, served and tested against the handlers. Use when adding or changing an endpoint, a query parameter or a response field, when editing openapi.yaml or the /docs page, or when pkg/torznab/openapi_test.go or the vacuum lint (.vacuum.yml) fails.
 ---
 
 # OpenAPI spec
@@ -14,7 +14,54 @@ description: How Jacklet's OpenAPI document (cmd/jacklet/public/openapi.yaml) is
 ## Ordering
 
 - **`openapi.yaml` is ordered, like the Go structs**: `paths`, the `components` sections, the entries within each of them, and each schema's `properties` are sorted alphabetically. These are lookup tables — nobody reads `components/parameters` top to bottom — so alphabetical is what makes an entry findable, and it is where a newly added parameter belongs rather than appended at the end. Each schema's `required` is the sorted list of its own properties, which doubles as the check that catches a field added to a Go struct but left out of the spec: every field of `jackettIndexer`, `jackettCapability`, `searchResults`, `searchIndexer` and `jackettResult` is emitted unconditionally, so `required` and `properties` must match exactly.
-- **…but an operation's `parameters:` list is grouped, not sorted**: Scalar renders parameters in document order, so that list is the order a human configuring Sonarr/Radarr reads. It is grouped by what a parameter is for — the indexer and the operation (`id`, `row`, `t`), the core search (`q`, `cat`), television (`season`, `ep`), the identifiers a tracker may be searched by directly, `extended`/`year`/`genre`, music, books, then paging (`limit`, `offset`) — and a new parameter goes into its group. Sorting it alphabetically scatters the pairs (`season` away from `ep`, `limit` away from `offset`) and opens the list with `album`, ahead of `q`. This is the same exemption `torznab.Channel` and `torznab.Item` take, where declaration order is the wire format; here it is the rendered format. The document's own top-level keys are exempt too, keeping the conventional `openapi`/`info`/`servers`/`security`/`paths`/`components` reading order.
+- **…but an operation's `parameters:` list is grouped, not sorted**: Scalar renders parameters in document order, so that list is the order a human configuring Sonarr/Radarr reads. It is grouped by what a parameter is for — the indexer and the operation (`id`, `row`, `t`), the core search (`q`, `cat`), television (`season`, `ep`), the identifiers a tracker may be searched by directly, `extended`/`year`/`genre`, music, books, then paging (`limit`, `offset`) — and a new parameter goes into its group. Sorting it alphabetically scatters the pairs (`season` away from `ep`, `limit` away from `offset`) and opens the list with `album`, ahead of `q`. This is the same exemption `torznab.Channel` and `torznab.Item` take, where declaration order is the wire format; here it is the rendered format. The document's own top-level keys are exempt too, putting what applies to the whole document ahead of what it applies to: `openapi`, `info`, `servers`, `security`, `tags`, `paths`, `components`. So is the top-level `tags` list, which is the order Scalar's sidebar shows the operations' groups in.
+
+## Style
+
+The spec is read twice: as YAML by whoever edits it, and as the page Scalar renders at `/docs` for whoever configures a client. Where an established convention covers a choice — the OpenAPI specification itself, the rules vacuum's `recommended` ruleset checks (Spectral's `oas` rules, reimplemented in Go), yamllint's defaults — the spec follows it, so a reader who knows OpenAPI finds what they expect. The rest exist because YAML and the rendered page disagree about what a character means.
+
+- **vacuum checks what it can see**: `.vacuum.yml` holds those rules, vacuum's `recommended` set and the project's own, and a finding names its rule and line, so they are not repeated here. A rule vacuum can check goes in `.vacuum.yml` rather than in this file, with a violation planted in `cmd/jacklet/testdata/openapi-violations.yaml` and an expectation in `scripts/check-vacuum-rules.sh`, which CI runs, since a rule that silently stops matching passes the spec as readily as one that holds. CI runs it through vacuum's action at a pinned version with a minimum score of 100: the action fails only on errors and on the score, and every warning or info finding costs a point, so any of them fails the build, while a hint does not. `docs/development.md` has the command. What follows is what vacuum cannot see, and the reasons behind the choices it enforces without explaining.
+
+### The document
+
+- **`openapi` names the release the document is written against**: the newest patch of OpenAPI 3.2 at the time the spec was last edited, and an edit moves it to a newer patch if one has been published. A tool treats every patch of a minor release alike, so moving to a new patch changes the number and nothing else; a new minor release is adopted once Scalar and vacuum both read it.
+- **A tag names the part of the API its operations belong to**: Scalar groups its sidebar by tag, so an operation with two would appear twice, and shows the tag's description as the group's introduction above its operations.
+- **An `operationId` starts with a verb for what the operation does** (`listIndexers`, `downloadTorrent`): a client generator turns it into a method name, which reads as a call only when it starts with one. Nothing in Jackett's compatibility depends on it: clients address paths, not operations.
+
+### Prose
+
+- **A description is CommonMark**, which is what the specification defines every `description` field as and what Scalar renders, so the YAML text is source and the page is what a reader sees.
+  - A literal a client sends or reads back is a code span: a parameter or field name, a value such as `all` or `t=caps`, a path, a template variable such as `.Query.IMDBID`, an environment variable, a content type, an example query. Double quotes are prose quotation, for words a person might say ("this tracker is down"), never a way to mark a value.
+  - Code spans are the only Markdown used: no emphasis, lists, headings or links, so the source stays readable as plain text.
+- **A `summary` is a short noun phrase in sentence case**, since Scalar shows it as the operation's title, and a response's description says what the body is rather than `OK`.
+- **"id" is lowercase in prose** ("IMDb id", "row id", "indexer id"). The capitalized spellings are names Jackett's JSON uses, such as the `ID` and `TrackerId` keys, and appear only as code spans.
+- **Components of one kind are described in one pattern**, so that a difference in wording reads as a difference in behavior: every external-id parameter says what it identifies and the template variable a definition reads it as, and every music or book parameter names the search it is for.
+
+### Schemas
+
+- **A body's example sits on the schema it illustrates**, as the `examples` array JSON Schema defines, rather than on the media type: vacuum asks for an example on each property of a body's schema whatever the media type carries, so an example kept on the media type would be written twice, and Scalar builds the example response it shows from the schemas. A parameter's example is the OpenAPI `examples` map, each entry with a `summary`. Example data is invented, as everywhere in the project.
+- **OpenAPI's own defaults are left out**: a parameter is not marked `required: false`, nor a query parameter `style: form` or `explode: true`. A `default` that documents the API's behavior, such as `offset`'s, is not one of these and stays.
+
+### Key order
+
+- **The keys of an object follow the specification's Fixed Fields table for it**, the one order a reader can look up rather than learn from this file. An entry is read through rather than looked up, so its keys are not alphabetical. For the objects the spec uses:
+  - `info`: `title`, `description`, `contact`, `license`, `version`;
+  - an operation: `tags`, `summary`, `description`, `operationId`, `parameters`, `responses`, `security`;
+  - a parameter: `name`, `in`, `description`, `required`, `examples`, `style`, `explode`, `schema`;
+  - a response: `description`, `content`, or a `$ref` alone;
+  - a media type: `schema`, `examples`;
+  - a security scheme: `type`, `description`, `name`, `in`;
+  - a tag: `name`, `description`.
+- **A schema, which has no such table, puts its type first**: `type` and the keywords that narrow it (`format`, `enum`, `default`), then `description` and `examples`, then its nested shape, `items` or `properties` and `required`.
+
+### YAML
+
+- **A description that spans lines is a `>` scalar**, never `>-` or `|`. Folding joins the lines with spaces, which is what lets prose wrap, and the trailing newline `>-` strips changes nothing on the page, so one indicator is used throughout.
+- **A paragraph break is two blank lines**: in a `>` scalar one blank line becomes a single newline, which CommonMark reads as a soft break inside the same paragraph, and only two become the blank line that ends one.
+- **Lines wrap at 80 columns**, yamllint's default, and a paragraph that is edited is refilled rather than left with a short line in its middle. A value that cannot be broken, such as a URL in an example, is the one thing that runs past it. A description that fits on its key's line within 80 columns is a plain scalar; one that does not, or that opens with a code span (a backtick cannot begin a plain YAML scalar) or contains `: `, is a `>` scalar.
+- **Quotes appear only where YAML would otherwise read a different value**: a status code (`"200"` would be an integer key, where OpenAPI requires a string), a `$ref` (its `#` would start a comment), `version` (`1.0` would be a number), `"null"` in a type list, and in an example a string that looks like another type, such as an empty string (null), a number (`"2040"`) or a timestamp. Every other value is a plain or `>` scalar.
+- **A list is a flow sequence only when it fits on one line** (`required: [ID, Name]`); a longer one is a block sequence, one `- ` item per line, never a flow sequence spread over several.
+- **Blank lines separate the large entries**: one goes between the top-level keys, between the `components` sections, between paths and between schemas. The parameter and response components, a few lines each, run together.
 
 ## Testing
 

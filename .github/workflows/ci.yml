@@ -56,6 +56,10 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    env:
+      # The image is pinned by digest, since it runs against the checked-out
+      # repository.
+      VACUUM_VERSION: v0.30.6@sha256:e13b08c36d5858753cafe677282bb38d9b7ca7945f3a3afba403ed47520dc5af
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -88,6 +92,18 @@ jobs:
         with:
           version: v2.13.2
           working-directory: packaging/wixcheck
+
+      # The action fails only on errors and on the score, and any warning or
+      # info finding costs a point, so a minimum of 100 fails on every one.
+      # It is pinned by commit for the same reason its image is.
+      - uses: pb33f/vacuum-action@2e890c7ef0b35e1179d974cb9ac327ed959fbc52 # v2
+        with:
+          openapi_path: cmd/jacklet/public/openapi.yaml
+          ruleset: .vacuum.yml
+          minimum_score: 100
+          vacuum_version: ${{ env.VACUUM_VERSION }}
+      - name: Check the project's vacuum rules
+        run: scripts/check-vacuum-rules.sh docker run --rm -v "${PWD}:/work:ro" "dshanley/vacuum:${VACUUM_VERSION}"
 
       # The installer authoring is checked here rather than with the
       # package it builds, because none of what this catches stops a build:

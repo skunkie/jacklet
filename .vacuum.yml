@@ -1,0 +1,69 @@
+# SPDX-FileCopyrightText: 2026 TorrPlay
+#
+# SPDX-License-Identifier: MIT
+
+# The ruleset vacuum lints cmd/jacklet/public/openapi.yaml against.
+
+extends: [[vacuum:oas, recommended]]
+
+rules:
+  # The JSON shapes are Jackett's, key for key, casing included.
+  camel-case-properties: off
+
+  info-contact: true
+  info-license: true
+  openapi-tags: true
+  operation-singular-tag: true
+  required-fields-defined: true
+  tag-description: true
+
+  jacklet-description-sentence:
+    description: A description is sentences ending in a period.
+    severity: warn
+    # A schema is found by the key it sits under, which reaches every nested
+    # schema but none of the example data under examples, whose own
+    # description fields are not prose.
+    given:
+      - $.info.description
+      - $.tags[*].description
+      - $.paths[*][*].description
+      - $.paths[*][*].parameters[*].description
+      - $.paths[*][*].responses[*].description
+      - $.components.parameters[*].description
+      - $.components.responses[*].description
+      - $.components.schemas[*].description
+      - $.components.securitySchemes[*].description
+      - $..schema.description
+      - $..properties[*].description
+      - $..items.description
+    then:
+      function: pattern
+      functionOptions:
+        match: '\.\s*$'
+
+  jacklet-operation-id-camel:
+    description: An operationId is camelCase.
+    severity: warn
+    given: $.paths[*][*].operationId
+    then:
+      function: casing
+      functionOptions:
+        type: camel
+
+  jacklet-summary-no-period:
+    description: A summary is a phrase without a trailing period.
+    severity: warn
+    given: $.paths[*][*].summary
+    then:
+      function: pattern
+      functionOptions:
+        notMatch: '\.\s*$'
+
+  jacklet-tag-title-case:
+    description: A tag is a noun in title case.
+    severity: warn
+    given: $.tags[*].name
+    then:
+      function: pattern
+      functionOptions:
+        match: '^[A-Z][A-Za-z0-9]*( [A-Z0-9][A-Za-z0-9]*)*$'

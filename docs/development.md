@@ -13,7 +13,15 @@ go build ./...
 go test ./...
 golangci-lint run
 reuse lint
+vacuum lint -r .vacuum.yml --min-score 100 -d -b cmd/jacklet/public/openapi.yaml
+scripts/check-vacuum-rules.sh vacuum
 ```
+
+Install [vacuum](https://quobix.com/vacuum/) at the release CI pins: the
+version before the `@` in `VACUUM_VERSION` in `.github/workflows/ci.yml`.
+The second vacuum command checks that each of the project's own rules in
+`.vacuum.yml` still reports the violation
+`cmd/jacklet/testdata/openapi-violations.yaml` plants for it.
 
 ## Windows
 

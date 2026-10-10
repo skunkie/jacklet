@@ -28,14 +28,18 @@ describes, rather than in a public issue.
 
 ## Setting up
 
-You need a current Go toolchain, [golangci-lint](https://golangci-lint.run/)
-and [reuse](https://reuse.software/). The checks a change has to pass are:
+You need a current Go toolchain, [golangci-lint](https://golangci-lint.run/),
+[reuse](https://reuse.software/) and [vacuum](https://quobix.com/vacuum/), at
+the release CI pins as described in [Development](docs/development.md). The
+checks a change has to pass are:
 
 ```bash
 go build ./...
 go test ./...
 golangci-lint run
 reuse lint
+vacuum lint -r .vacuum.yml --min-score 100 -d -b cmd/jacklet/public/openapi.yaml
+scripts/check-vacuum-rules.sh vacuum
 ```
 
 Code that only builds on Windows, such as the service and installer support,

@@ -21,7 +21,7 @@ Jacklet aims to reuse Jackett's own indexer definitions directly, with full comp
 - **Body Requirements**: For a non-trivial commit, add a body after a blank line and use `-` bullets. Write each bullet as a complete sentence ending with a period.
 - **Content Focus**: Use body bullets to describe observable behavior, important implementation or safety details, and relevant test coverage. Do not narrate file-by-file edits.
 - **Timestamp Symmetry**: When rebasing, amending, or squashing commits, ensure `GIT_COMMITTER_DATE` matches `GIT_AUTHOR_DATE`.
-- **Atomic Buildability**: Ensure every commit compiles and verifies cleanly: run `go build ./...`, `go test ./...`, `golangci-lint run` (config in `.golangci.yml`), and `reuse lint`.
+- **Atomic Buildability**: Ensure every commit compiles and verifies cleanly: run `go build ./...`, `go test ./...`, `golangci-lint run` (config in `.golangci.yml`), `reuse lint`, vacuum against the OpenAPI spec (ruleset in `.vacuum.yml`), and `scripts/check-vacuum-rules.sh`, which checks the project's own rules in `.vacuum.yml` still report their planted violations (commands in `docs/development.md`).
 
 Example:
 
@@ -218,6 +218,8 @@ Each subsystem's full record is an Agent Skill; the entry here names the rules m
 - **OpenAPI spec** (`cmd/jacklet/public/openapi.yaml`, served at `/docs`): the full record is in `.agents/skills/jacklet-openapi-spec/SKILL.md`; read it before changing an endpoint, a parameter, a response field or the spec. The rules most easily undone:
   - A new endpoint, query parameter, `t` value, response field, response status, content type or security requirement updates `openapi.yaml` in the same change; `pkg/torznab/openapi_test.go` and `cmd/jacklet/openapi_test.go` fail otherwise, in both directions.
   - The spec's lookup tables are sorted alphabetically, and each schema's `required` lists exactly its properties, while an operation's `parameters:` list is grouped by purpose in the order a person configuring a client reads it.
+  - A description is CommonMark, as Scalar renders it: a literal value is a code span, not a quoted string, and a paragraph break is two blank lines in a `>` scalar, since one is only a soft break.
+  - vacuum lints the spec against `.vacuum.yml`, its recommended rules plus the project's own, and CI fails on any error, warning or info finding; the rules it cannot see, such as key order and code spans, are held in review.
   - The admin panel is not in the spec: it serves pages to a person, not an API.
 - **Admin panel** (`pkg/admin`): the full record is in `.agents/skills/jacklet-admin-panel/SKILL.md`; read it before changing the panel. The rules most easily undone:
   - No admin password means no panel: every `/admin` path is a 404, never an open panel.
