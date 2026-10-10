@@ -43,6 +43,7 @@ func routes(mux *web.ServeMux, handlers []web.Handler) {
 	mux.HandleFunc("GET /search", s.Search)
 	mux.HandleFunc("GET /typed", s.Typed)
 	mux.HandleFunc("GET /dynamic", s.Dynamic)
+	mux.HandleFunc("GET /moved", s.Moved)
 	mux.Handle("GET /value", s)
 	mux.HandleFunc("GET /later", later)
 	mux.Handle("GET /split", split)
@@ -138,6 +139,14 @@ func (s *server) Typed(w web.ResponseWriter, r *web.Request) {
 
 func (s *server) Dynamic(w web.ResponseWriter, r *web.Request) {
 	w.Header().Set("Content-Type", r.Header.Get("Accept"))
+}
+
+func (s *server) Moved(w web.ResponseWriter, r *web.Request) {
+	if r.URL.Path == "" {
+		web.NotFound(w, r)
+		return
+	}
+	web.Redirect(w, r, "/", web.StatusFound)
 }
 
 func (s *server) conflict(w web.ResponseWriter) {
@@ -259,6 +268,21 @@ func TestSource_Behavior(t *testing.T) {
 			name:    "marks a content type computed at run time",
 			pattern: "GET /dynamic",
 			want:    Behavior{SetsDynamicContentType: true},
+		},
+		{
+			// net/http is imported as web, and Error is reached through a
+			// helper, so neither the name nor the call site gives it away.
+			name:    "reads the text/plain an http.Error call sets",
+			pattern: "GET /upstream",
+			want:    Behavior{ContentTypes: []string{"text/plain"}, Statuses: []int{504}},
+		},
+		{
+			// Redirect's status is an argument, while NotFound's 404 is
+			// written inside net/http, where no constant in this code names
+			// it.
+			name:    "reads what http.Redirect and http.NotFound write",
+			pattern: "GET /moved",
+			want:    Behavior{ContentTypes: []string{"text/html", "text/plain"}, Statuses: []int{302, 404}},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

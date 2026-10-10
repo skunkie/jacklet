@@ -36,7 +36,7 @@ info:
     here with 502 where Jackett sends 400, because the status describes
     the failure and the client branches on the error code either way. The
     JSON endpoints answer with their own `{"error": "…"}` shape instead,
-    and a download failure is a bare status.
+    and a download failure with a plain-text message.
 
 
     Every path here is the one Jackett serves the same thing from, so a
@@ -134,9 +134,9 @@ paths:
                 items:
                   $ref: "#/components/schemas/JackettIndexer"
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/UnauthorizedJson"
         "500":
-          $ref: "#/components/responses/InternalServerError"
+          $ref: "#/components/responses/InternalServerErrorJson"
 
   /api/v2.0/indexers/{id}/download/{row}:
     get:
@@ -187,19 +187,51 @@ paths:
             The result's download is a magnet, the tracker answered with one
             as its body, or the torrent file could not be fetched and the
             result also carries a magnet, and the client is redirected to it.
+            The body is the short HTML link a redirect carries.
+          content:
+            text/html:
+              schema:
+                type: string
+              examples:
+                magnet:
+                  summary: A redirect to the result's magnet
+                  value: '<a href="magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567">Found</a>.'
         "400":
           description: >
             The row id was not a number, or the stored link does not belong
             to this tracker.
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                badRow:
+                  summary: A row id that is not a number
+                  value: Invalid row id
+                foreignLink:
+                  summary: A stored link off the tracker's hosts
+                  value: 'Refused to download from example-tracker: the link
+                    leaves the tracker'
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/UnauthorizedPlain"
         "404":
           description: >
             No such indexer, no such stored result for it, or the result
             carries no download link, or only a magnet that cannot be
             redirected to.
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                noResult:
+                  summary: No such stored result
+                  value: No such result
+                noLink:
+                  summary: A result with nothing to download
+                  value: This result has no download link
         "500":
-          $ref: "#/components/responses/InternalServerError"
+          $ref: "#/components/responses/InternalServerErrorPlain"
         "502":
           description: >
             The tracker refused the request, could not be reached, or
@@ -209,6 +241,14 @@ paths:
             parse, is cut short or is larger than the download cap. A magnet
             the tracker supplies that is cut off, too long to send as a
             redirect, or names no exact topic is answered the same way.
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                failed:
+                  summary: The tracker refused or failed the download
+                  value: Failed to download from example-tracker
 
   /api/v2.0/indexers/{id}/results:
     get:
@@ -272,11 +312,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/SearchResults"
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/UnauthorizedJson"
         "404":
-          $ref: "#/components/responses/IndexerNotFound"
+          $ref: "#/components/responses/IndexerNotFoundJson"
         "500":
-          $ref: "#/components/responses/InternalServerError"
+          $ref: "#/components/responses/InternalServerErrorJson"
         "503":
           description: >
             No indexer definition loaded at all, so there is nothing
@@ -293,6 +333,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                unconfigured:
+                  summary: No definitions loaded
+                  value:
+                    error: No indexer definitions are configured
 
   /api/v2.0/indexers/{id}/results/torznab/api:
     get:
@@ -401,19 +446,41 @@ paths:
                 type: string
         "400":
           description: >
-            Missing or unrecognized `t` parameter, or `t=indexers` asked of
-            an indexer other than the aggregate — which answers with a
-            Torznab error document carrying code 203, not a plain status —
-            or a search no tracker the indexer covers can answer, such as a
-            mode its caps do not advertise or an IMDb id none takes, which
-            answers with code 201. A search only some of them can answer
-            goes to those.
+            The request cannot be answered as asked, and the error document
+            carries a code for each case: 202 for a missing or unrecognized
+            `t`, 203 for `t=indexers` asked of an indexer other than the
+            aggregate, and 201 for a search no tracker the indexer covers can
+            answer, such as a mode its caps do not advertise or an IMDb id
+            none takes. A search only some of them can answer goes to those.
+          content:
+            application/xml:
+              schema:
+                $ref: "#/components/schemas/TorznabError"
+              examples:
+                unknownMode:
+                  summary: A missing or unrecognized t
+                  value:
+                    code: 202
+                    description: Invalid 't' parameter
+                notAggregate:
+                  summary: t=indexers asked of a single indexer
+                  value:
+                    code: 203
+                    description: 'Function Not Available: this isn''t a meta
+                      indexer'
+                unsupported:
+                  summary: A search no tracker can answer
+                  value:
+                    code: 201
+                    description: example-tracker does not support the requested
+                      query. Please check the capabilities (t=caps) and make
+                      sure the search mode and parameters are supported.
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/UnauthorizedTorznab"
         "404":
-          $ref: "#/components/responses/IndexerNotFound"
+          $ref: "#/components/responses/IndexerNotFoundTorznab"
         "500":
-          $ref: "#/components/responses/InternalServerError"
+          $ref: "#/components/responses/InternalServerErrorTorznab"
         "502":
           description: >
             The indexer's site was unreachable and nothing was already
@@ -421,6 +488,16 @@ paths:
             exist, those are served with a 200 instead. For the aggregate
             id `all` or a filter expression, this means every indexer it
             covers failed.
+          content:
+            application/xml:
+              schema:
+                $ref: "#/components/schemas/TorznabError"
+              examples:
+                unreachable:
+                  summary: The tracker could not be reached
+                  value:
+                    code: 900
+                    description: Indexer example-tracker is unreachable
         "503":
           description: >
             No indexer definition loaded at all, so there is nothing
@@ -429,6 +506,16 @@ paths:
             unconfigured whichever one was addressed. A filter that matched
             none of the definitions it did load is not this case: it covers
             nothing, which is an empty feed.
+          content:
+            application/xml:
+              schema:
+                $ref: "#/components/schemas/TorznabError"
+              examples:
+                unconfigured:
+                  summary: No definitions loaded
+                  value:
+                    code: 900
+                    description: No indexer definitions are configured
 
   /healthz:
     get:
@@ -441,6 +528,14 @@ paths:
           description: The database is reachable.
         "503":
           description: The database is unreachable.
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                unreachable:
+                  summary: The database did not answer
+                  value: database unreachable
       security: []
 
 components:
@@ -733,25 +828,118 @@ components:
         type: string
 
   responses:
-    IndexerNotFound:
+    IndexerNotFoundJson:
       description: >
-        No definition with that id was found. The body follows the endpoint
-        asked: a Torznab error document with code 201 — Jackett's code for
-        an indexer it does not support — from the Torznab endpoint, and the
-        JSON error shape from the results endpoint.
-    InternalServerError:
+        No definition with that id was found. The body is the JSON error shape.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            unknown:
+              summary: An id no definition has
+              value:
+                error: 'tracker not found: "unknown-tracker"'
+    IndexerNotFoundTorznab:
       description: >
-        The definitions directory could not be read, or the store could not
-        be queried. Unlike a failed scrape, which falls back to stored
-        results, there is nothing to answer with. The body follows the
-        endpoint asked, carrying Torznab code 900 on the Torznab endpoint.
-    Unauthorized:
+        No definition with that id was found. The body is a Torznab error
+        document with code 201, Jackett's code for an indexer it does not
+        support.
+      content:
+        application/xml:
+          schema:
+            $ref: "#/components/schemas/TorznabError"
+          examples:
+            unknown:
+              summary: An id no definition has
+              value:
+                code: 201
+                description: 'tracker not found: "unknown-tracker"'
+    InternalServerErrorJson:
       description: >
-        Missing or incorrect `apikey`. The body follows the endpoint asked:
-        a Torznab error document with code 100 — which a client reads to
-        tell a rejected key from a failure worth retrying — from the Torznab
-        endpoint, the JSON error shape from the results endpoint, and plain
-        text from a download, which has no document to carry a code.
+        Jacklet failed on its own side, such as the definitions directory not
+        being readable or the store not answering a query. Unlike a failed
+        scrape, which falls back to stored results, there is nothing to answer
+        with. The body is the JSON error shape.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            definitions:
+              summary: The definitions could not be loaded
+              value:
+                error: Failed to load tracker definitions
+    InternalServerErrorPlain:
+      description: >
+        Jacklet failed on its own side, such as the definitions directory not
+        being readable or the store not answering a query. Unlike a failed
+        scrape, which falls back to stored results, there is nothing to answer
+        with. The body is a plain-text message.
+      content:
+        text/plain:
+          schema:
+            type: string
+          examples:
+            lookup:
+              summary: The store could not be read
+              value: Failed to look up the result
+    InternalServerErrorTorznab:
+      description: >
+        Jacklet failed on its own side, such as the definitions directory not
+        being readable or the store not answering a query. Unlike a failed
+        scrape, which falls back to stored results, there is nothing to answer
+        with. The body is a Torznab error document
+        with code 900.
+      content:
+        application/xml:
+          schema:
+            $ref: "#/components/schemas/TorznabError"
+          examples:
+            definitions:
+              summary: The definitions could not be loaded
+              value:
+                code: 900
+                description: Failed to load tracker definitions
+    UnauthorizedJson:
+      description: >
+        Missing or incorrect `apikey`. The body is the JSON error shape.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            rejected:
+              summary: A missing or wrong key
+              value:
+                error: Invalid API Key
+    UnauthorizedPlain:
+      description: >
+        Missing or incorrect `apikey`. The body is a plain-text message, since a
+        download has no document to carry a code.
+      content:
+        text/plain:
+          schema:
+            type: string
+          examples:
+            rejected:
+              summary: A missing or wrong key
+              value: Invalid API Key
+    UnauthorizedTorznab:
+      description: >
+        Missing or incorrect `apikey`. The body is a Torznab error document with
+        code 100, which a client reads to tell a rejected key from a failure
+        worth retrying.
+      content:
+        application/xml:
+          schema:
+            $ref: "#/components/schemas/TorznabError"
+          examples:
+            rejected:
+              summary: A missing or wrong key
+              value:
+                code: 100
+                description: Invalid API Key
 
   schemas:
     ErrorResponse:
@@ -1198,6 +1386,37 @@ components:
           items:
             $ref: "#/components/schemas/JackettResult"
       required: [Indexers, Results]
+
+    TorznabError:
+      type: object
+      description: >
+        Torznab's error document, `<error code="…" description="…"/>`, which
+        carries its code and message as attributes of the root element.
+      examples:
+        - code: 100
+          description: Invalid API Key
+      xml:
+        name: error
+      properties:
+        code:
+          type: integer
+          enum: [100, 201, 202, 203, 900]
+          description: >
+            The Torznab error code a client branches on: 100 for a rejected
+            `apikey`, 201 for an unknown indexer or a search none of its
+            trackers can answer, 202 for an unknown `t`, 203 for an operation
+            the indexer does not offer, and 900 for anything else.
+          examples: [100]
+          xml:
+            attribute: true
+        description:
+          type: string
+          description: >
+            What failed, for a person to read; a client branches on `code`.
+          examples: [Invalid API Key]
+          xml:
+            attribute: true
+      required: [code, description]
 
   securitySchemes:
     apiKey:

@@ -715,7 +715,7 @@ func (t *Torznab) handleSearch(w http.ResponseWriter, r *http.Request, idx *inde
 // writeJSONError is the errorWriter for the JSON endpoints. The Torznab
 // code is dropped rather than added to the body: the JSON shape is
 // Jackett's, which carries no such field.
-func (t *Torznab) writeJSONError(w http.ResponseWriter, status, _ int, message string) {
+func (t *Torznab) writeJSONError(w http.ResponseWriter, status int, _ errorCode, message string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(map[string]string{"error": message}); err != nil {

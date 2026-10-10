@@ -7,7 +7,10 @@ package torznab
 import (
 	"fmt"
 	"go/ast"
+	"go/constant"
+	"go/parser"
 	"go/token"
+	"go/types"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -188,11 +191,107 @@ func TestOpenAPISchemasMatchTheResponseStructs(t *testing.T) {
 			"ErrorResponse must document the single %q field writeJSONError encodes", "error")
 	}
 
+	if schema, ok := all["TorznabError"]; assert.True(t, ok, "the spec has no schema %q", "TorznabError") {
+		element, attributes := xmlShape(t, reflect.TypeFor[torznabError]())
+		assert.Equal(t, element, mustChild(t, mustChild(t, schema, "xml"), "name").Value,
+			"TorznabError must name the root element torznabError is encoded as")
+		properties := mustChild(t, schema, "properties")
+		got := mapKeys(properties)
+		slices.Sort(got)
+		assert.Equal(t, attributes, got, "TorznabError: documented properties do not match the struct's XML attributes")
+		for _, name := range got {
+			xmlNode := child(child(properties, name), "xml")
+			assert.True(t, xmlNode != nil && child(xmlNode, "attribute") != nil && child(xmlNode, "attribute").Value == "true",
+				"TorznabError.%s is encoded as an attribute, so the spec must mark it xml.attribute", name)
+		}
+		enum := mustChild(t, mustChild(t, properties, "code"), "enum")
+		documented := make([]int, 0, len(enum.Content))
+		for _, node := range enum.Content {
+			code, err := strconv.Atoi(node.Value)
+			require.NoError(t, err, "TorznabError.code's enum lists %q, which is not a code", node.Value)
+			documented = append(documented, code)
+		}
+		slices.Sort(documented)
+		assert.Equal(t, torznabErrorCodes(t), documented,
+			"TorznabError.code's enum must list exactly the errorCode constants the package declares")
+	}
+
 	for name := range all {
 		_, covered := cases[name]
-		assert.True(t, covered || name == "ErrorResponse",
+		assert.True(t, covered || name == "ErrorResponse" || name == "TorznabError",
 			"schema %q is not checked against a struct; add it to this test", name)
 	}
+}
+
+// torznabErrorCodes returns the Torznab error codes the package declares,
+// the value of every package-level constant of type errorCode, sorted. It
+// type-checks the package's own files rather than naming the codes here,
+// so a code declared in any file, in any form a constant can be written
+// in, is a code the spec has to document.
+func torznabErrorCodes(t *testing.T) []int {
+	t.Helper()
+	paths, err := filepath.Glob("*.go")
+	require.NoError(t, err)
+	fset := token.NewFileSet()
+	var files []*ast.File
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		require.NoError(t, err)
+		files = append(files, file)
+	}
+	// The codes are the package's own constants and need nothing from its
+	// imports, so each import is left unresolved, and the errors that
+	// leaves elsewhere are ignored, rather than type-checking every
+	// dependency from source.
+	conf := types.Config{Error: func(error) {}, Importer: stubImporter{}}
+	pkg, _ := conf.Check("torznab", fset, files, nil)
+	errorCodeType := pkg.Scope().Lookup("errorCode")
+	require.NotNil(t, errorCodeType, "the package declares no errorCode type")
+	var codes []int
+	for _, name := range pkg.Scope().Names() {
+		value, ok := pkg.Scope().Lookup(name).(*types.Const)
+		if !ok || !types.Identical(value.Type(), errorCodeType.Type()) {
+			continue
+		}
+		code, isExact := constant.Int64Val(value.Val())
+		require.True(t, isExact, "%s is not an exact integer", name)
+		codes = append(codes, int(code))
+	}
+	slices.Sort(codes)
+	return codes
+}
+
+// stubImporter is a types.Importer that resolves nothing, for a check
+// that reads only the package's own declarations.
+type stubImporter struct{}
+
+// Import reports every import as unresolved.
+func (stubImporter) Import(path string) (*types.Package, error) {
+	return nil, fmt.Errorf("%s is not loaded", path)
+}
+
+// xmlShape returns the root element a struct is encoded as, from its
+// XMLName field, and the sorted names of the attributes it carries. A field
+// encoded as anything other than an attribute fails the test, since the
+// error document has no child elements for a schema to describe.
+func xmlShape(t *testing.T, typ reflect.Type) (element string, attributes []string) {
+	t.Helper()
+	for field := range typ.Fields() {
+		name, opts, _ := strings.Cut(field.Tag.Get("xml"), ",")
+		if field.Name == "XMLName" {
+			element = name
+			continue
+		}
+		if !assert.Equal(t, "attr", opts, "%s.%s is not encoded as an attribute", typ.Name(), field.Name) {
+			continue
+		}
+		attributes = append(attributes, name)
+	}
+	slices.Sort(attributes)
+	return element, attributes
 }
 
 // jsonFieldNames returns the JSON names a struct marshals to. A field

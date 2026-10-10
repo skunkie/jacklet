@@ -142,7 +142,9 @@ func receiverName(fn *ast.FuncDecl) string {
 // Behavior is what a handler's code can do, as read from its source.
 type Behavior struct {
 	// ContentTypes are the media types it sets a Content-Type header to,
-	// where the value is a literal.
+	// where the value is a literal, or that a function of another package
+	// it calls sets, as http.Error sets text/plain and http.Redirect
+	// text/html.
 	ContentTypes []string
 	// Parameters are the query parameters it reads, by the names its code
 	// looks them up under.
@@ -183,7 +185,8 @@ func (b Behavior) Merge(other Behavior) Behavior {
 // so it is listed when the code writes one: a Write, WriteString or Encode
 // call on any value, or one of io's copies, fmt's Fprint functions or
 // net/http's ServeContent and ServeFile family. That too can overstate,
-// since a body written after an error's header counts.
+// since a body written after an error's header counts. A responder that
+// writes a status of its own, as http.NotFound writes 404, adds it.
 //
 // The parameters are every string literal passed to a method of, or used
 // to index, a value derived from the request's URL query: the result of a
@@ -191,7 +194,8 @@ func (b Behavior) Merge(other Behavior) Behavior {
 // either, the way r.URL.Query().Get("t") and a helper wrapping url.Values
 // both read one. The content types are the literal values a Content-Type
 // header is set, added or assigned, through a Header() call or a local
-// holding one, without their parameters.
+// holding one, without their parameters, and the media type each call to
+// one of responders sets.
 //
 // The handler may be a function literal, a function or a variable holding
 // one, a method value (t.Results), a value whose ServeHTTP serves (t), or a
@@ -463,11 +467,43 @@ func (s *Source) IsQuery(expr ast.Expr) bool {
 	return false
 }
 
+// responder is what a function of another package that answers a request
+// itself writes: the media type it sets, and the status it writes when
+// the status is not one of its arguments, which no constant in the
+// handler's own code then names.
+type responder struct {
+	mediaType string
+	status    int
+}
+
+// responders are the functions of other packages, by import path, that
+// answer a request themselves.
+var responders = map[string]map[string]responder{
+	"net/http": {
+		"Error":    {mediaType: "text/plain"},
+		"NotFound": {mediaType: "text/plain", status: http.StatusNotFound},
+		"Redirect": {mediaType: "text/html"},
+	},
+}
+
 // contentType records the media type a Header().Set or Header().Add of
-// "Content-Type" sets, or that it sets one computed at run time.
+// "Content-Type" sets, or one of responders sets along with any status of
+// its own, or that it sets one computed at run time.
 func (w *handlerWalk) contentType(call *ast.CallExpr) {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || (sel.Sel.Name != "Set" && sel.Sel.Name != "Add") || len(call.Args) != 2 || !w.isHeader(sel.X) {
+	if !ok {
+		return
+	}
+	if path := w.source.importPath(sel.X); path != "" {
+		if answer, ok := responders[path][sel.Sel.Name]; ok {
+			w.contentTypes[answer.mediaType] = true
+			if answer.status != 0 {
+				w.statuses[answer.status] = true
+			}
+		}
+		return
+	}
+	if (sel.Sel.Name != "Set" && sel.Sel.Name != "Add") || len(call.Args) != 2 || !w.isHeader(sel.X) {
 		return
 	}
 	if isContentTypeKey(call.Args[0]) {
