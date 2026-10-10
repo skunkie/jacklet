@@ -21,7 +21,9 @@ Install [vacuum](https://quobix.com/vacuum/) at the release CI pins: the
 version before the `@` in `VACUUM_VERSION` in `.github/workflows/ci.yml`.
 The second vacuum command checks that each of the project's own rules in
 `.vacuum.yml` still reports the violation
-`cmd/jacklet/testdata/openapi-violations.yaml` plants for it.
+`cmd/jacklet/testdata/openapi-violations.yaml` plants for it, and that the
+minimum score CI fails the spec below still catches a single warning or info
+finding.
 
 ## Windows
 
