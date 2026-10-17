@@ -167,10 +167,11 @@ The release notes are generated from the commit log by
 [git-cliff](https://git-cliff.org/), from `cliff.toml`. Each commit subject
 is read as `type(scope): summary`: the type picks the section it lands in
 (`feat` under Features, `fix` under Bug fixes, and so on), the scope becomes
-the bold lead-in, and the rest is the entry. A subject with no such prefix,
-and one whose type `cliff.toml` lists as housekeeping, is left out. Subjects
-alone make up the notes, so a change earns its line there through the way it
-is summarized.
+the bold lead-in, and the rest is the entry. A subject with no such prefix
+is left out, as is one whose type has no section of its own, such as `chore`
+(apart from `chore(deps)`) or `style`, unless it marks a breaking change;
+those are listed under Other breaking changes. Subjects alone make up the
+notes, so a change earns its line there through the way it is summarized.
 
 With git-cliff installed (a binary from its
 [releases](https://github.com/orhun/git-cliff/releases), a distribution

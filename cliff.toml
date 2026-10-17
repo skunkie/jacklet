@@ -40,7 +40,8 @@ conventional_commits = true
 # it is dropped rather than landing in the notes ungrouped. A merge commit is
 # the usual case.
 filter_unconventional = true
-# Likewise for a conventional commit whose type no parser below claims.
+# Likewise for a commit no parser below puts in a group. The last parser
+# claims every remaining type, so this is only a safeguard.
 filter_commits = true
 split_commits = false
 # A breaking change is never skipped, whatever its type.
@@ -49,21 +50,21 @@ tag_pattern = "v[0-9]*"
 topo_order = false
 sort_commits = "oldest"
 
-# The first matching parser wins. Groups render in alphabetical order, so
-# each name carries a numeric sort prefix that the template strips at the
-# "@", putting the sections in the order below.
+# The first matching parser wins, and types match in any case. Groups render
+# in alphabetical order, so each name carries a numeric sort prefix that the
+# template strips at the "@", putting the sections in the order below.
 commit_parsers = [
-  { message = "^feat", group = "0@Features" },
-  { message = "^fix", group = "1@Bug fixes" },
-  { message = "^perf", group = "2@Performance" },
-  { message = "^refactor", group = "3@Refactoring" },
-  { message = "^revert", group = "4@Reverts" },
-  { message = "^docs", group = "5@Documentation" },
-  { message = "^test", group = "6@Tests" },
-  { message = "^(build|ci)", group = "7@Build & CI" },
-  { message = "^chore\\(deps\\)", group = "8@Dependencies" },
-  # Housekeeping that says nothing to someone reading the notes to decide
-  # whether to upgrade.
-  { message = "^chore\\(release\\)", skip = true },
-  { message = "^(chore|style)", skip = true },
+  { message = "(?i)^feat", group = "0@Features" },
+  { message = "(?i)^fix", group = "1@Bug fixes" },
+  { message = "(?i)^perf", group = "2@Performance" },
+  { message = "(?i)^refactor", group = "3@Refactoring" },
+  { message = "(?i)^revert", group = "4@Reverts" },
+  { message = "(?i)^docs", group = "5@Documentation" },
+  { message = "(?i)^test", group = "6@Tests" },
+  { message = "(?i)^(build|ci)", group = "7@Build & CI" },
+  { message = "(?i)^chore\\(deps\\)", group = "8@Dependencies" },
+  # Every other type, such as chore and style, is housekeeping that says
+  # nothing to someone reading the notes to decide whether to upgrade. A
+  # breaking one is still kept and needs the group.
+  { message = ".*", group = "9@Other breaking changes", skip = true },
 ]
