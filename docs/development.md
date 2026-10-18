@@ -16,6 +16,7 @@ reuse lint
 vacuum lint -r .vacuum.yml --min-score 100 -d -b api/openapi.yaml
 scripts/check-vacuum-rules.sh vacuum
 yamlfmt -lint .
+scripts/check-changelog-groups.sh git-cliff
 ```
 
 Install [vacuum](https://quobix.com/vacuum/) at the release CI pins: the
@@ -31,6 +32,11 @@ yamlfmt checks that every YAML file in the repository is formatted as
 it formats them in place. Install it with
 `go install github.com/google/yamlfmt/cmd/yamlfmt` at the version in
 `YAMLFMT_VERSION` in `.github/workflows/ci.yml`.
+
+The last command checks that each kind of commit lands in its section of the
+release notes, or is left out, against a throwaway history whose commits say
+where they belong. It takes the git-cliff release in `GIT_CLIFF_VERSION` in
+`.github/workflows/ci.yml`; [Releases](#releases) says where to get it.
 
 ## Windows
 
@@ -162,6 +168,8 @@ ARCH=arm64 VERSION=v1.2.3 REPO_URL=https://github.com/torrplay/jacklet \
 ```
 
 `man -l man/man1/jacklet.1.gz` reads a rendered page without installing it.
+
+## Releases
 
 The release notes are generated from the commit log by
 [git-cliff](https://git-cliff.org/), from `cliff.toml`. Each commit subject

@@ -260,15 +260,35 @@ jobs:
   changelog:
     name: Changelog
     runs-on: ubuntu-latest
+    env:
+      # The release GIT_CLIFF_VERSION in release.yml renders the notes with;
+      # a bump there moves both of these, the archive's published SHA-512
+      # with it.
+      GIT_CLIFF_VERSION: v2.14.1
+      GIT_CLIFF_SHA512: bb40f68e752db1a32526c43e0108e8eff785f7c24c67024cffe1c316e034372975fd78c9af8e9a48148235aad15c9a103f1a5b490c282f1db09a7a793794b69f
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: orhun/git-cliff-action@v4
         with:
-          version: v2.14.1
+          version: ${{ env.GIT_CLIFF_VERSION }}
           config: cliff.toml
           args: --unreleased
         env:
           GITHUB_REPO: ${{ github.repository }}
           GIT_CLIFF_OFFLINE: "true"
+      # Rendering shows only that the template runs. The parsers that file
+      # each commit under its section are checked against a fixture history,
+      # with the same release run directly, since the action renders only
+      # this repository.
+      - name: Check the changelog sections
+        run: |
+          set -euo pipefail
+          release="${GIT_CLIFF_VERSION#v}"
+          archive="git-cliff-${release}-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSL --retry 3 --retry-all-errors -o "${RUNNER_TEMP}/${archive}" \
+            "https://github.com/orhun/git-cliff/releases/download/${GIT_CLIFF_VERSION}/${archive}"
+          echo "${GIT_CLIFF_SHA512}  ${RUNNER_TEMP}/${archive}" | sha512sum -c -
+          tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}"
+          scripts/check-changelog-groups.sh "${RUNNER_TEMP}/git-cliff-${release}/git-cliff"

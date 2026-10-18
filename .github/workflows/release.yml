@@ -21,7 +21,8 @@ env:
   # rebuild of an old tag produces the same packages.
   NFPM_VERSION: v2.47.0
   # git-cliff renders the release notes from the commit log, using
-  # cliff.toml. Pinned for the same reason as nfpm.
+  # cliff.toml. Pinned for the same reason as nfpm, and to the release the
+  # changelog job in ci.yml checks cliff.toml with, so a bump moves both.
   GIT_CLIFF_VERSION: v2.14.1
   # The WiX toolset builds the MSI, with the extensions the package uses.
   # Pinned for the same reason as nfpm.
