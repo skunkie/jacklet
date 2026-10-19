@@ -17,6 +17,8 @@ vacuum lint -r .vacuum.yml --min-score 100 -d -b api/openapi.yaml
 scripts/check-vacuum-rules.sh vacuum
 yamlfmt -lint .
 scripts/check-changelog-groups.sh git-cliff
+actionlint
+shellcheck scripts/*.sh packaging/*.sh packaging/scripts/*.sh
 ```
 
 Install [vacuum](https://quobix.com/vacuum/) at the release CI pins: the
@@ -33,10 +35,21 @@ it formats them in place. Install it with
 `go install github.com/google/yamlfmt/cmd/yamlfmt` at the version in
 `YAMLFMT_VERSION` in `.github/workflows/ci.yml`.
 
-The last command checks that each kind of commit lands in its section of the
-release notes, or is left out, against a throwaway history whose commits say
-where they belong. It takes the git-cliff release in `GIT_CLIFF_VERSION` in
-`.github/workflows/ci.yml`; [Releases](#releases) says where to get it.
+`scripts/check-changelog-groups.sh` checks that each kind of commit lands in
+its section of the release notes, or is left out, against a throwaway history
+whose commits say where they belong. It takes the git-cliff release in
+`GIT_CLIFF_VERSION` in `.github/workflows/ci.yml`; [Releases](#releases) says
+where to get it.
+
+actionlint checks the GitHub Actions workflows, and each step's bash script
+with shellcheck, which it needs on the path: without it, actionlint skips
+those checks silently. It does not read the PowerShell steps. Install it
+with `go install github.com/rhysd/actionlint/cmd/actionlint` at the version
+in `ACTIONLINT_VERSION` in `.github/workflows/ci.yml`, and
+[shellcheck](https://github.com/koalaman/shellcheck/releases) at the release
+in `SHELLCHECK_VERSION` there, since another release may check differently.
+The shellcheck command holds the repository's own scripts to it: the checks
+above, the package's maintainer scripts and the rpm smoke test.
 
 ## Windows
 

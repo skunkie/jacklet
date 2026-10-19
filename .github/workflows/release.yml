@@ -180,7 +180,12 @@ jobs:
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
         run: |
           set -euo pipefail
-          deb=$(ls out/*.deb)
+          # A glob that matches nothing fails the step rather than standing
+          # for itself as a file name.
+          shopt -s failglob
+          debs=(out/*.deb)
+          test "${#debs[@]}" -eq 1
+          deb=${debs[0]}
 
           # nfpm expands an unset variable to nothing rather than failing,
           # so an empty field here means the packaging step lost REPO_URL.
@@ -198,14 +203,10 @@ jobs:
           # The count comes from the render rather than a number written
           # here, which would say only what was true when it was written;
           # which pages exist at all is pinned by mkman's own tests.
-          #
-          # As an assignment this takes the pipeline's status, so a glob
-          # that matches nothing fails here rather than counting zero.
-          rendered=$(ls man/man7/*.7.gz | wc -l)
-          test "${rendered}" -gt 0
-
+          rendered=(man/man7/*.7.gz)
           test -f /usr/share/man/man1/jacklet.1.gz
-          test "$(ls /usr/share/man/man7/jacklet-*.7.gz | wc -l)" -eq "${rendered}"
+          installed=(/usr/share/man/man7/jacklet-*.7.gz)
+          test "${#installed[@]}" -eq "${#rendered[@]}"
 
           # A first install leaves the service stopped and not enabled, so
           # that an endpoint with no API key set does not reach the network.
@@ -235,69 +236,17 @@ jobs:
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
         run: |
           set -euo pipefail
+          # A glob that matches nothing fails the step rather than standing
+          # for itself as a file name.
+          shopt -s failglob
           # The container is given only the packages, so the number of
-          # pages that were rendered is counted here and passed in. As an
-          # assignment this takes the pipeline's status, so rendering
-          # nothing fails here rather than counting zero.
-          rendered=$(ls man/man7/*.7.gz | wc -l)
-          test "${rendered}" -gt 0
+          # pages that were rendered is counted here and passed in.
+          rendered=(man/man7/*.7.gz)
 
           docker run --rm -i \
             -v "${PWD}/out:/out:ro" \
-            -e "MAN7_RENDERED=${rendered}" \
-            "fedora:${FEDORA_VERSION}" bash -s <<'SCRIPT'
-          set -euo pipefail
-
-          # The base image carries neither systemd-analyze nor useradd, and
-          # the scriptlets need the latter to create the service account.
-          dnf install -y --setopt=install_weak_deps=False systemd shadow-utils >/dev/null
-
-          rpm_file=$(ls /out/*.rpm)
-
-          # nfpm expands an unset variable to nothing rather than failing,
-          # so an empty URL means the packaging step lost REPO_URL. rpm
-          # reports a tag it does not carry as "(none)".
-          url=$(rpm --query --package --queryformat '%{URL}' "${rpm_file}")
-          test -n "${url}"
-          test "${url}" != "(none)"
-
-          rpm --install "${rpm_file}" 2>&1 | tee /tmp/install.log
-          getent passwd jacklet
-          test -x /usr/bin/jacklet
-          test -f /etc/jacklet/jacklet.env
-          systemd-analyze verify /usr/lib/systemd/system/jacklet.service
-
-          # nfpm reports a missing file, but packages an empty man7
-          # directory without complaint, so what is checked is that every
-          # page the release rendered is a page the package installed.
-          test -f /usr/share/man/man1/jacklet.1.gz
-          test "$(ls /usr/share/man/man7/jacklet-*.7.gz | wc -l)" -eq "${MAN7_RENDERED}"
-
-          # A first install leaves the service stopped and not enabled, so
-          # that an endpoint with no API key set does not reach the network.
-          # There is no manager running in here for systemctl is-enabled to
-          # ask, and it would report the unit as disabled for that reason
-          # alone, so what is checked is the symlink enabling would create.
-          test ! -e /etc/systemd/system/multi-user.target.wants/jacklet.service
-
-          # The first-install branch of postinstall is the one that prints
-          # the setup instructions, so its message is what distinguishes the
-          # two branches from outside.
-          grep -q 'Jacklet is installed but not started' /tmp/install.log
-
-          # --force reinstalls the same version as an upgrade transaction,
-          # which is how the upgrade branch of the scriptlets -- the one
-          # that keeps a running service running and stays quiet -- is
-          # reached without building a second version.
-          rpm --upgrade --force "${rpm_file}" 2>&1 | tee /tmp/upgrade.log
-          ! grep -q 'Jacklet is installed but not started' /tmp/upgrade.log
-
-          # The unit must still not be enabled after an upgrade either.
-          test ! -e /etc/systemd/system/multi-user.target.wants/jacklet.service
-
-          rpm --erase jacklet
-          test ! -e /usr/bin/jacklet
-          SCRIPT
+            -e "MAN7_RENDERED=${#rendered[@]}" \
+            "fedora:${FEDORA_VERSION}" bash -s <packaging/smoke-rpm.sh
 
       # out/ holds the archive for every target, plus the .deb and .rpm on
       # Linux.

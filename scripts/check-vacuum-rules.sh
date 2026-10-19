@@ -40,6 +40,7 @@ expect "rule: jacklet-operation-id-camel"
 expect "rule: jacklet-summary-no-period"
 expect "rule: jacklet-tag-title-case"
 refuse "Example data without a period"
+# shellcheck disable=SC2016 # The backticks are vacuum's, not a substitution.
 refuse '`string` does not match'
 
 # CI fails the spec through a minimum score of 100, which holds only while
